@@ -233,11 +233,6 @@ async function handleOnboarding(userId, message) {
           simpleText: {
             text: `온보딩이 완료되었습니다! 🎉\n이제 일일 업무를 기록해보세요.`
           }
-        }],
-        quickReplies: [{
-          label: "첫 업무 기록하기",
-          action: "message",
-          messageText: "업무 기록"
         }]
       }
     };
