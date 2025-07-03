@@ -148,6 +148,32 @@ async function handleWelcome(userId) {
 
 // 온보딩 처리
 async function handleOnboarding(userId, message) {
+  // 사용자 정보 먼저 확인
+  const { data: user } = await supabase
+    .from('users')
+    .select('*')
+    .eq('kakao_user_id', userId)
+    .single();
+
+  // 이미 온보딩이 완료된 경우
+  if (user && user.onboarding_completed) {
+    return {
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: `${user.name}님은 이미 온보딩이 완료되었습니다!`
+          }
+        }],
+        quickReplies: [{
+          label: "업무기록",
+          action: "message",
+          messageText: "업무 기록"
+        }]
+      }
+    };
+  }
+
   // 현재 온보딩 단계 확인
   const { data: state } = await supabase
     .from('conversation_states')
@@ -177,7 +203,6 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'name_input') {
-    // 직무 입력 단계로
     await supabase.from('conversation_states').upsert({
       kakao_user_id: userId,
       current_step: 'job_input',
@@ -198,7 +223,6 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'job_input') {
-    // 프로젝트 입력 단계로
     const tempData = { ...state.temp_data, job_title: message };
     await supabase.from('conversation_states').upsert({
       kakao_user_id: userId,
@@ -245,7 +269,7 @@ async function handleOnboarding(userId, message) {
           }
         }],
         quickReplies: [{
-          label: "첫기록",
+          label: "업무기록",
           action: "message",
           messageText: "업무 기록"
         }]
@@ -253,13 +277,19 @@ async function handleOnboarding(userId, message) {
     };
   }
 
-  // 기본 응답
+  // 알 수 없는 상태인 경우
+  console.log(`Unknown onboarding state for user ${userId}:`, state);
+  
+  // 상태 초기화 후 다시 시작
+  await supabase.from('conversation_states').delete()
+    .eq('kakao_user_id', userId);
+
   return {
     version: "2.0",
     template: {
       outputs: [{
         simpleText: {
-          text: "온보딩 단계를 인식할 수 없습니다. 다시 시작해주세요."
+          text: "온보딩 상태에 문제가 있어 초기화했습니다. 다시 시작해주세요."
         }
       }],
       quickReplies: [{
