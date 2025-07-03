@@ -29,7 +29,8 @@ app.post('/webhook', async (req, res) => {
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
 
-    // action.params.id로 변경
+    console.log('Action:', action); // 디버깅용
+    
     const actionId = action.name;
     
     let response;
@@ -53,7 +54,7 @@ app.post('/webhook', async (req, res) => {
           template: {
             outputs: [{
               simpleText: {
-                text: "알 수 없는 명령입니다."
+                text: `알 수 없는 명령입니다.\n받은 액션: ${actionId}`
               }
             }]
           }
@@ -63,7 +64,16 @@ app.post('/webhook', async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('Webhook error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+          }
+        }]
+      }
+    });
   }
 });
 
@@ -103,7 +113,7 @@ async function handleWelcome(userId) {
           }
         }],
         quickReplies: [{
-          label: "온보딩 계속",
+          label: "온보딩계속",
           action: "message",
           messageText: "온보딩 계속"
         }]
@@ -121,12 +131,12 @@ async function handleWelcome(userId) {
         }],
         quickReplies: [
           {
-            label: "오늘 업무 기록하기",
+            label: "업무기록",
             action: "message", 
             messageText: "업무 기록"
           },
           {
-            label: "오늘은 쉬기",
+            label: "쉬기",
             action: "message",
             messageText: "쉬기"
           }
@@ -233,10 +243,32 @@ async function handleOnboarding(userId, message) {
           simpleText: {
             text: `온보딩이 완료되었습니다! 🎉\n이제 일일 업무를 기록해보세요.`
           }
+        }],
+        quickReplies: [{
+          label: "첫기록",
+          action: "message",
+          messageText: "업무 기록"
         }]
       }
     };
   }
+
+  // 기본 응답
+  return {
+    version: "2.0",
+    template: {
+      outputs: [{
+        simpleText: {
+          text: "온보딩 단계를 인식할 수 없습니다. 다시 시작해주세요."
+        }
+      }],
+      quickReplies: [{
+        label: "다시시작",
+        action: "message",
+        messageText: "온보딩 시작"
+      }]
+    }
+  };
 }
 
 // 일일 기록 처리
@@ -258,7 +290,7 @@ async function handleDailyRecord(userId) {
           }
         }],
         quickReplies: [{
-          label: "온보딩 시작",
+          label: "온보딩시작",
           action: "message",
           messageText: "온보딩 시작"
         }]
@@ -283,6 +315,11 @@ async function handleDailyRecord(userId) {
           simpleText: {
             text: "오늘은 이미 기록을 완료하셨습니다! ✅"
           }
+        }],
+        quickReplies: [{
+          label: "메인으로",
+          action: "message",
+          messageText: "메인"
         }]
       }
     };
@@ -316,26 +353,9 @@ async function handleWorkRecord(userId, message) {
     .eq('kakao_user_id', userId)
     .single();
 
-  // 상태가 없으면 새로 생성 (수정된 부분)
+  // 상태가 없거나 잘못된 경우 - daily_record로 리다이렉트
   if (!state || !state.current_step) {
-    // 업무 기록 시작
-    await supabase.from('conversation_states').upsert({
-      kakao_user_id: userId,
-      current_step: 'work_content',
-      temp_data: {},
-      updated_at: new Date()
-    });
-
-    return {
-      version: "2.0",
-      template: {
-        outputs: [{
-          simpleText: {
-            text: "오늘 어떤 업무를 하셨나요? 간단히 작성해주세요."
-          }
-        }]
-      }
-    };
+    return await handleDailyRecord(userId);
   }
 
   if (state.current_step === 'work_content') {
@@ -356,9 +376,9 @@ async function handleWorkRecord(userId, message) {
           }
         }],
         quickReplies: [
-          { label: "😊 좋음", action: "message", messageText: "좋음" },
-          { label: "😐 보통", action: "message", messageText: "보통" },
-          { label: "😔 안좋음", action: "message", messageText: "안좋음" }
+          { label: "😊좋음", action: "message", messageText: "좋음" },
+          { label: "😐보통", action: "message", messageText: "보통" },
+          { label: "😔안좋음", action: "message", messageText: "안좋음" }
         ]
       }
     };
@@ -434,6 +454,11 @@ async function handleWorkRecord(userId, message) {
           simpleText: {
             text: `기록이 완료되었습니다! 🎉\n${user.attendance_count + 1}일째 기록 중이시네요!\n내일도 화이팅! 💪`
           }
+        }],
+        quickReplies: [{
+          label: "완료",
+          action: "message",
+          messageText: "메인"
         }]
       }
     };
@@ -449,7 +474,7 @@ async function handleWorkRecord(userId, message) {
         }
       }],
       quickReplies: [{
-        label: "업무 기록하기",
+        label: "업무기록",
         action: "message",
         messageText: "업무 기록"
       }]
