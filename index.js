@@ -31,6 +31,15 @@ app.post('/webhook', async (req, res) => {
 
     // action.params.id로 변경
     const actionId = action.params.id;
+
+    // 디버깅을 위한 로그 출력
+    console.log('=== 디버깅 정보 ===');
+    console.log('전체 action 객체:', JSON.stringify(action, null, 2));
+    console.log('action.name:', action.name);
+    console.log('action.id:', action.id);
+    console.log('action.params:', JSON.stringify(action.params, null, 2));
+    console.log('action.params.id:', action.params ? action.params.id : 'undefined');
+    console.log('==================');
     
     let response;
     
