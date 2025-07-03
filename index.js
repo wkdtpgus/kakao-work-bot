@@ -12,6 +12,17 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// 루트 경로 추가 (테스트용)
+app.get('/', (req, res) => {
+  res.json({
+    message: "카카오 업무기록 챗봇 서버가 정상 작동 중입니다.",
+    endpoints: {
+      webhook: "/webhook"
+    },
+    status: "running"
+  });
+});
+
 // 웹훅 엔드포인트
 app.post('/webhook', async (req, res) => {
   try {
