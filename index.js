@@ -30,7 +30,7 @@ app.post('/webhook', async (req, res) => {
     const userId = userRequest.user.id;
 
     // action.params.id로 변경
-    const actionId = params.id;
+    const actionId = action.params.id;
     
     let response;
     
