@@ -243,12 +243,37 @@ async function handleOnboarding(userId, message) {
 
 // 일일 기록 처리
 async function handleDailyRecord(userId) {
+  // 사용자 정보 확인
+  const { data: user } = await supabase
+    .from('users')
+    .select('*')
+    .eq('kakao_user_id', userId)
+    .single();
+
+  if (!user) {
+    return {
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: "사용자 정보를 찾을 수 없습니다. 온보딩을 먼저 진행해주세요."
+          }
+        }],
+        quickReplies: [{
+          label: "온보딩 시작",
+          action: "message",
+          messageText: "온보딩 시작"
+        }]
+      }
+    };
+  }
+
   // 오늘 이미 기록했는지 확인
   const today = new Date().toISOString().split('T')[0];
   const { data: todayRecord } = await supabase
     .from('daily_records')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', user.id)
     .eq('record_date', today)
     .single();
 
@@ -292,6 +317,28 @@ async function handleWorkRecord(userId, message) {
     .select('*')
     .eq('kakao_user_id', userId)
     .single();
+
+  // 상태가 없으면 새로 생성 (수정된 부분)
+  if (!state || !state.current_step) {
+    // 업무 기록 시작
+    await supabase.from('conversation_states').upsert({
+      kakao_user_id: userId,
+      current_step: 'work_content',
+      temp_data: {},
+      updated_at: new Date()
+    });
+
+    return {
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: "오늘 어떤 업무를 하셨나요? 간단히 작성해주세요."
+          }
+        }]
+      }
+    };
+  }
 
   if (state.current_step === 'work_content') {
     // 기분 입력 단계로
@@ -352,6 +399,19 @@ async function handleWorkRecord(userId, message) {
       .eq('kakao_user_id', userId)
       .single();
 
+    if (!user) {
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "사용자 정보를 찾을 수 없습니다. 온보딩을 다시 진행해주세요."
+            }
+          }]
+        }
+      };
+    }
+
     // 일일 기록 저장
     await supabase.from('daily_records').insert({
       user_id: user.id,
@@ -380,6 +440,23 @@ async function handleWorkRecord(userId, message) {
       }
     };
   }
+
+  // 알 수 없는 상태인 경우
+  return {
+    version: "2.0",
+    template: {
+      outputs: [{
+        simpleText: {
+          text: "상태를 알 수 없습니다. 다시 시작해주세요."
+        }
+      }],
+      quickReplies: [{
+        label: "업무 기록하기",
+        action: "message",
+        messageText: "업무 기록"
+      }]
+    }
+  };
 }
 
 const PORT = process.env.PORT || 3000;
