@@ -30,30 +30,21 @@ app.post('/webhook', async (req, res) => {
     const userId = userRequest.user.id;
 
     // action.params.id로 변경
-    const actionId = action.params.id;
-
-    // 디버깅을 위한 로그 출력
-    console.log('=== 디버깅 정보 ===');
-    console.log('전체 action 객체:', JSON.stringify(action, null, 2));
-    console.log('action.name:', action.name);
-    console.log('action.id:', action.id);
-    console.log('action.params:', JSON.stringify(action.params, null, 2));
-    console.log('action.params.id:', action.params ? action.params.id : 'undefined');
-    console.log('==================');
+    const actionId = action.id;
     
     let response;
     
     switch (actionId) {
-      case 'welcome':
+      case '7kcshdlrx3l607rwyu77z223':
         response = await handleWelcome(userId);
         break;
-      case 'onboarding':
+      case 'mgf35izye59yaklhu5en136r':
         response = await handleOnboarding(userId, userRequest.utterance);
         break;
-      case 'daily_record':
+      case 'wawhvf0z9prw2uqazj8de158':
         response = await handleDailyRecord(userId);
         break;
-      case 'record_work':
+      case 'dtlmpt05s757bqrsnrmmnv0p':
         response = await handleWorkRecord(userId, userRequest.utterance);
         break;
       default:
