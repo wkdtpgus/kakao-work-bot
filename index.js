@@ -36,16 +36,16 @@ app.post('/webhook', async (req, res) => {
     let response;
     
     switch (actionId) {
-      case 'welcome':
+      case '웰컴':
         response = await handleWelcome(userId);
         break;
-      case 'onboarding':
+      case '온보딩':
         response = await handleOnboarding(userId, userRequest.utterance);
         break;
-      case 'daily_record':
+      case '일일기록':
         response = await handleDailyRecord(userId);
         break;
-      case 'record_work':
+      case '업무기록':
         response = await handleWorkRecord(userId, userRequest.utterance);
         break;
       default:
