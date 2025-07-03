@@ -30,21 +30,21 @@ app.post('/webhook', async (req, res) => {
     const userId = userRequest.user.id;
 
     // action.params.id로 변경
-    const actionId = action.id;
+    const actionId = action.name;
     
     let response;
     
     switch (actionId) {
-      case '7kcshdlrx3l607rwyu77z223':
+      case 'welcome':
         response = await handleWelcome(userId);
         break;
-      case 'mgf35izye59yaklhu5en136r':
+      case 'onboarding':
         response = await handleOnboarding(userId, userRequest.utterance);
         break;
-      case 'wawhvf0z9prw2uqazj8de158':
+      case 'daily_record':
         response = await handleDailyRecord(userId);
         break;
-      case 'dtlmpt05s757bqrsnrmmnv0p':
+      case 'record_work':
         response = await handleWorkRecord(userId, userRequest.utterance);
         break;
       default:
