@@ -23,42 +23,75 @@ app.get('/', (req, res) => {
   });
 });
 
-// 웹훅 엔드포인트
+// 웹훅 엔드포인트 - 대화 연속성 수정
 app.post('/webhook', async (req, res) => {
   try {
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
+    const userMessage = userRequest.utterance;
 
-    console.log('Action:', action); // 디버깅용
+    console.log('Action:', action);
+    console.log('User message:', userMessage);
     
     const actionId = action.name;
     
     let response;
-    
-    switch (actionId) {
-      case '웰컴':
+
+    // 🔥 핵심: 진행 중인 대화 상태를 먼저 확인
+    const { data: state } = await supabase
+      .from('conversation_states')
+      .select('*')
+      .eq('kakao_user_id', userId)
+      .single();
+
+    // 진행 중인 대화가 있으면 우선 처리
+    if (state && state.current_step) {
+      console.log('Found active conversation:', state.current_step);
+      
+      if (state.current_step === 'name_input' || 
+          state.current_step === 'job_input' || 
+          state.current_step === 'project_input') {
+        // 온보딩 진행 중
+        response = await handleOnboarding(userId, userMessage);
+      } else if (state.current_step === 'work_content' || 
+                 state.current_step === 'mood_input' || 
+                 state.current_step === 'achievements') {
+        // 업무 기록 진행 중
+        response = await handleWorkRecord(userId, userMessage);
+      } else {
+        // 알 수 없는 상태 - 초기화 후 웰컴으로
+        console.log('Unknown state, clearing:', state.current_step);
+        await supabase.from('conversation_states').delete()
+          .eq('kakao_user_id', userId);
         response = await handleWelcome(userId);
-        break;
-      case '온보딩':
-        response = await handleOnboarding(userId, userRequest.utterance);
-        break;
-      case '일일기록':
-        response = await handleDailyRecord(userId);
-        break;
-      case '업무기록':
-        response = await handleWorkRecord(userId, userRequest.utterance);
-        break;
-      default:
-        response = {
-          version: "2.0",
-          template: {
-            outputs: [{
-              simpleText: {
-                text: `알 수 없는 명령입니다.\n받은 액션: ${actionId}`
-              }
-            }]
-          }
-        };
+      }
+    } else {
+      // 진행 중인 대화가 없을 때만 액션에 따라 처리
+      switch (actionId) {
+        case '웰컴':
+          response = await handleWelcome(userId);
+          break;
+        case '온보딩':
+          response = await handleOnboarding(userId, userMessage);
+          break;
+        case '일일기록':
+          response = await handleDailyRecord(userId);
+          break;
+        case '업무기록':
+          response = await handleWorkRecord(userId, userMessage);
+          break;
+        default:
+          response = {
+            version: "2.0",
+            template: {
+              outputs: [{
+                simpleText: {
+                  text: `알 수 없는 명령입니다.\n받은 액션: ${actionId}\n메시지: ${userMessage}`
+                }
+              }]
+            }
+          };
+      }
     }
     
     res.json(response);
@@ -385,6 +418,7 @@ async function handleWorkRecord(userId, message) {
 
   // 상태가 없거나 잘못된 경우 - daily_record로 리다이렉트
   if (!state || !state.current_step) {
+    console.log('No state found, redirecting to daily record');
     return await handleDailyRecord(userId);
   }
 
@@ -495,6 +529,7 @@ async function handleWorkRecord(userId, message) {
   }
 
   // 알 수 없는 상태인 경우
+  console.log(`Unknown work record state for user ${userId}:`, state);
   return {
     version: "2.0",
     template: {
