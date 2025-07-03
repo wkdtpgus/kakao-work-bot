@@ -28,10 +28,13 @@ app.post('/webhook', async (req, res) => {
   try {
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
+
+    // action.params.id로 변경
+    const actionId = params.id;
     
     let response;
     
-    switch (action.id) {
+    switch (actionId) {
       case 'welcome':
         response = await handleWelcome(userId);
         break;
