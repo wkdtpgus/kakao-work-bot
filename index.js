@@ -228,7 +228,7 @@ async function handleOnboarding(userId, message) {
       template: {
         outputs: [{
           simpleText: {
-            text: "이름을 입력해주세요."
+            text: "사용하실 닉네임을 입력해주세요."
           }
         }]
       }
