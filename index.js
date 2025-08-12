@@ -157,7 +157,8 @@ async function handleAIConversation(userId, message) {
     
     // 첫 번째 메시지인지 확인 (대화 히스토리가 비어있거나 첫 번째 메시지인 경우)
     if (!aiState || !aiState.temp_data?.conversation_history || aiState.temp_data.conversation_history.length === 0) {
-      // 첫 번째 메시지: ai_intro 단계로 설정하고 안내 메시지 표시
+      console.log('🆕 새로운 AI 대화 시작 - 안내 메시지 표시');
+      
       // 사용자 이름 가져오기
       const { data: user } = await supabase
         .from('users')
@@ -166,6 +167,7 @@ async function handleAIConversation(userId, message) {
         .single();
       
       const userName = user?.name || '사용자';
+      console.log('👤 사용자 이름:', userName);
       
       // ai_intro 단계로 설정
       const { error: updateError } = await supabase
@@ -184,6 +186,8 @@ async function handleAIConversation(userId, message) {
       
       if (updateError) {
         console.error('❌ ai_intro 단계 설정 실패:', updateError);
+      } else {
+        console.log('✅ ai_intro 단계로 설정 완료');
       }
       
       // 안내 메시지 표시 (사용자 이름 포함)
@@ -413,6 +417,8 @@ app.post('/webhook', async (req, res) => {
         response = await handleOnboarding(userId, userMessage);
       } else if (state.current_step === 'ai_intro') {
         console.log('📋 AI Agent 소개 단계 - 사용자 응답 대기');
+        console.log('📨 사용자 응답:', userMessage);
+        
         // ai_intro 단계에서 사용자가 응답하면 ai_conversation으로 전환
         // 사용자 이름 가져오기
         const { data: user } = await supabase
@@ -422,7 +428,9 @@ app.post('/webhook', async (req, res) => {
           .single();
         
         const userName = user?.name || '사용자';
+        console.log('👤 사용자 이름:', userName);
         
+        // ai_conversation 단계로 전환
         const { error: updateError } = await supabase
           .from('conversation_states')
           .update({
@@ -430,7 +438,8 @@ app.post('/webhook', async (req, res) => {
             temp_data: {
               ...state.temp_data,
               conversation_history: [
-                { role: 'assistant', content: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!` }
+                { role: 'assistant', content: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!` },
+                { role: 'user', content: userMessage }
               ]
             },
             updated_at: new Date()
@@ -440,9 +449,12 @@ app.post('/webhook', async (req, res) => {
         
         if (updateError) {
           console.error('❌ ai_conversation 단계 전환 실패:', updateError);
+        } else {
+          console.log('✅ ai_conversation 단계로 성공적으로 전환됨');
         }
         
         // 이제 AI Agent와 실제 대화 시작
+        console.log('🤖 AI Agent 대화 시작 - handleAIConversation 호출');
         response = await handleAIConversation(userId, userMessage);
       } else if (state.current_step === 'ai_conversation') {
         console.log('🤖 AI Agent 대화 진행 중 - handleAIConversation 호출');
