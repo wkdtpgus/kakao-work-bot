@@ -147,6 +147,14 @@ async function handleAIConversation(userId, message) {
     // 즉시 응답을 위한 자연스러운 대화형 메시지 (AI와 대화 중임을 숨김)
     let immediateResponse;
     
+    // 현재 AI 대화 상태 가져오기
+    let { data: aiState } = await supabase
+      .from('conversation_states')
+      .select('*')
+      .eq('kakao_user_id', userId)
+      .eq('current_step', 'ai_conversation')
+      .single();
+    
     // 첫 번째 메시지인지 확인 (대화 히스토리가 비어있거나 첫 번째 메시지인 경우)
     if (!aiState || !aiState.temp_data?.conversation_history || aiState.temp_data.conversation_history.length === 0) {
       // 첫 번째 메시지: ai_intro 단계로 설정하고 안내 메시지 표시
@@ -159,6 +167,7 @@ async function handleAIConversation(userId, message) {
       
       const userName = user?.name || '사용자';
       
+      // ai_intro 단계로 설정
       const { error: updateError } = await supabase
         .from('conversation_states')
         .update({
@@ -452,10 +461,10 @@ app.post('/webhook', async (req, res) => {
       if (userMessage === "온보딩 시작" || userMessage === "온보딩") {
         response = await handleOnboarding(userId, userMessage);
       } else if (userMessage === "오늘의 3분 커리어 시작!" || userMessage.includes("3분 커리어")) {
-        // AI Agent 대화 시작 - conversation_states에 상태 저장
+        // AI Agent 대화 시작 - ai_intro 단계로 설정
         await supabase.from('conversation_states').upsert({
           kakao_user_id: userId,
-          current_step: 'ai_conversation',
+          current_step: 'ai_intro',
           temp_data: {},
           updated_at: new Date()
         });
