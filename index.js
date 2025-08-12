@@ -249,12 +249,12 @@ async function handleOnboarding(userId, message) {
     
     const { data: updateResult, error: updateError } = await supabase
       .from('conversation_states')
-      .upsert({
-        kakao_user_id: userId,
+      .update({
         current_step: 'job_input',
         temp_data: { name: message },
         updated_at: new Date()
-      });
+      })
+      .eq('kakao_user_id', userId);
     
     console.log('Supabase response - data:', updateResult);
     console.log('Supabase response - error:', updateError);
@@ -288,13 +288,37 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'job_input') {
+    console.log('Processing job_input step');
+    console.log('Current temp_data:', state.temp_data);
+    console.log('New job_title:', message);
+    
     const tempData = { ...state.temp_data, job_title: message };
-    await supabase.from('conversation_states').upsert({
-      kakao_user_id: userId,
-      current_step: 'project_input',
-      temp_data: tempData,
-      updated_at: new Date()
-    });
+    console.log('Updated temp_data:', tempData);
+    
+    const { data: updateResult, error: updateError } = await supabase
+      .from('conversation_states')
+      .update({
+        current_step: 'project_input',
+        temp_data: tempData,
+        updated_at: new Date()
+      })
+      .eq('kakao_user_id', userId);
+    
+    if (updateError) {
+      console.error('Error updating conversation state:', updateError);
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "데이터베이스 오류가 발생했습니다. 다시 시도해주세요."
+            }
+          }]
+        }
+      };
+    }
+    
+    console.log('Update result:', updateResult);
 
     return {
       version: "2.0",
@@ -309,17 +333,38 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'project_input') {
+    console.log('Processing project_input step');
+    console.log('Current temp_data:', state.temp_data);
+    console.log('New project_name:', message);
+    
     // 온보딩 완료
     const tempData = { ...state.temp_data, project_name: message };
+    console.log('Final temp_data:', tempData);
     
     // 사용자 정보 저장
-    await supabase.from('users').upsert({
+    const { data: userResult, error: userError } = await supabase.from('users').upsert({
       kakao_user_id: userId,
       name: tempData.name,
       job_title: tempData.job_title,
       project_name: tempData.project_name,
       onboarding_completed: true
     });
+    
+    if (userError) {
+      console.error('Error creating user:', userError);
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "사용자 정보 저장 중 오류가 발생했습니다. 다시 시도해주세요."
+            }
+          }]
+        }
+      };
+    }
+    
+    console.log('User creation result:', userResult);
 
     // 상태 초기화
     await supabase.from('conversation_states').delete()
