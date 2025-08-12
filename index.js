@@ -12,6 +12,38 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// 키워드 추출 함수들
+function extractJobTitle(text) {
+  // "입니다", "이에요" 등 제거하고 핵심 직무만 추출
+  return text.replace(/입니다?|이에요|입니다\.?|이에요\.?/g, '').trim();
+}
+
+function extractYears(text) {
+  // "년차" 제거하고 숫자만 추출
+  const match = text.match(/(\d+)년차?/);
+  return match ? match[1] + '년차' : text;
+}
+
+function extractCareerGoal(text) {
+  // "입니다", "이에요" 등 제거
+  return text.replace(/입니다?|이에요|입니다\.?|이에요\.?/g, '').trim();
+}
+
+function extractProjectName(text) {
+  // "프로젝트명 : ", "목표 : " 등 제거하고 핵심 내용만 추출
+  return text.replace(/프로젝트명\s*:\s*|목표\s*:\s*/g, '').trim();
+}
+
+function extractRecentWork(text) {
+  // "를 주로합니다", "를 합니다" 등 제거하고 핵심 업무만 추출
+  return text.replace(/를\s*주로\s*합니다?|를\s*합니다?|합니다?\.?/g, '').trim();
+}
+
+function extractJobMeaning(text) {
+  // "라고 생각해요", "입니다" 등 제거하고 핵심 의미만 추출
+  return text.replace(/라고\s*생각해요?|입니다?|이에요?|입니다\.?|이에요\.?/g, '').trim();
+}
+
 // 루트 경로 추가 (테스트용)
 app.get('/', (req, res) => {
   res.json({
@@ -423,18 +455,18 @@ async function handleOnboarding(userId, message) {
     // 온보딩 완료
     const tempData = { ...state.temp_data, important_thing: message };
     
-    // 사용자 정보 저장
+    // 사용자 정보 저장 - 키워드 추출 적용
     const { data: userResult, error: userError } = await supabase.from('users').upsert({
       kakao_user_id: userId,
       name: tempData.name,
-      job_title: tempData.job_title,
-      total_years: tempData.total_years,
-      job_years: tempData.job_years,
-      career_goal: tempData.career_goal,
-      project_name: tempData.project_name,
-      recent_work: tempData.recent_work,
-      job_meaning: tempData.job_meaning,
-      important_thing: tempData.important_thing,
+      job_title: extractJobTitle(tempData.job_title),
+      total_years: extractYears(tempData.total_years),
+      job_years: extractYears(tempData.job_years),
+      career_goal: extractCareerGoal(tempData.career_goal),
+      project_name: extractProjectName(tempData.project_name),
+      recent_work: extractRecentWork(tempData.recent_work),
+      job_meaning: extractJobMeaning(tempData.job_meaning),
+      important_thing: tempData.important_thing, // 이미 짧은 키워드
       onboarding_completed: true
     });
     
