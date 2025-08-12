@@ -149,13 +149,41 @@ async function handleAIConversation(userId, message) {
     
     // 첫 번째 메시지인지 확인 (대화 히스토리가 비어있거나 첫 번째 메시지인 경우)
     if (!aiState || !aiState.temp_data?.conversation_history || aiState.temp_data.conversation_history.length === 0) {
-      // 첫 번째 메시지: 자연스러운 시작
+      // 첫 번째 메시지: ai_intro 단계로 설정하고 안내 메시지 표시
+      // 사용자 이름 가져오기
+      const { data: user } = await supabase
+        .from('users')
+        .select('name')
+        .eq('kakao_user_id', userId)
+        .single();
+      
+      const userName = user?.name || '사용자';
+      
+      const { error: updateError } = await supabase
+        .from('conversation_states')
+        .update({
+          current_step: 'ai_intro',
+          temp_data: {
+            conversation_history: [],
+            current_topic: '3분커리어',
+            user_name: userName
+          },
+          updated_at: new Date()
+        })
+        .eq('kakao_user_id', userId)
+        .eq('current_step', 'ai_conversation');
+      
+      if (updateError) {
+        console.error('❌ ai_intro 단계 설정 실패:', updateError);
+      }
+      
+      // 안내 메시지 표시 (사용자 이름 포함)
       immediateResponse = {
         version: "2.0",
         template: {
           outputs: [{
             simpleText: {
-              text: "안녕하세요! 오늘도 3분 커리어와 함께하시는군요. 어떤 이야기를 나누고 싶으신가요? 😊"
+              text: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!`
             }
           }]
         }
@@ -374,6 +402,39 @@ app.post('/webhook', async (req, res) => {
         console.log('📚 온보딩 진행 중 - handleOnboarding 호출');
         // 온보딩 진행 중
         response = await handleOnboarding(userId, userMessage);
+      } else if (state.current_step === 'ai_intro') {
+        console.log('📋 AI Agent 소개 단계 - 사용자 응답 대기');
+        // ai_intro 단계에서 사용자가 응답하면 ai_conversation으로 전환
+        // 사용자 이름 가져오기
+        const { data: user } = await supabase
+          .from('users')
+          .select('name')
+          .eq('kakao_user_id', userId)
+          .single();
+        
+        const userName = user?.name || '사용자';
+        
+        const { error: updateError } = await supabase
+          .from('conversation_states')
+          .update({
+            current_step: 'ai_conversation',
+            temp_data: {
+              ...state.temp_data,
+              conversation_history: [
+                { role: 'assistant', content: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!` }
+              ]
+            },
+            updated_at: new Date()
+          })
+          .eq('kakao_user_id', userId)
+          .eq('current_step', 'ai_intro');
+        
+        if (updateError) {
+          console.error('❌ ai_conversation 단계 전환 실패:', updateError);
+        }
+        
+        // 이제 AI Agent와 실제 대화 시작
+        response = await handleAIConversation(userId, userMessage);
       } else if (state.current_step === 'ai_conversation') {
         console.log('🤖 AI Agent 대화 진행 중 - handleAIConversation 호출');
         // AI Agent 대화 진행 중
