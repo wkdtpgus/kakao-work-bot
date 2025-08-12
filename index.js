@@ -65,6 +65,10 @@ async function callChatGPT(message, conversationHistory = []) {
       console.log('캐시된 응답 사용 - 토큰 절약!');
       return cached.response;
     }
+    
+    // 빠른 응답을 위한 타임아웃 설정
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4초 타임아웃
 
     // 토큰 절약: 대화 히스토리 길이 제한 (최근 6개 메시지만 유지)
     const limitedHistory = conversationHistory.slice(-6);
@@ -88,13 +92,22 @@ async function callChatGPT(message, conversationHistory = []) {
           ...truncatedHistory,
           { role: 'user', content: message.length > 300 ? message.substring(0, 300) + '...' : message }
         ],
-        max_tokens: 500, // 응답 길이 제한으로 토큰 절약
+        max_tokens: 300, // 더 빠른 응답을 위해 토큰 수 줄임
         temperature: 0.7
-      })
+      }),
+      signal: controller.signal
     });
+    
+    // 타임아웃 정리
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`OpenAI API error: ${response.status}`);
+    }
+    
+    // 타임아웃 에러 처리
+    if (response.status === 0 && response.type === 'aborted') {
+      throw new Error('OpenAI API timeout - 4초 초과');
     }
 
     const data = await response.json();
@@ -115,18 +128,94 @@ async function callChatGPT(message, conversationHistory = []) {
     return aiResponse;
   } catch (error) {
     console.error('ChatGPT API 호출 오류:', error);
+    
+    if (error.name === 'AbortError' || error.message.includes('timeout')) {
+      return "죄송합니다. 응답이 너무 늦어졌습니다. 다시 시도해주세요.";
+    }
+    
     return "죄송합니다. AI 응답을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
   }
 }
 
-// AI Agent 대화 처리
+// AI Agent 대화 처리 - 타임아웃 방지 버전
 async function handleAIConversation(userId, message) {
   try {
     console.log('🤖 AI Agent 대화 시작:', userId);
     console.log('📨 받은 메시지:', message);
     console.log('🔄 함수 실행 시작...');
     
-    // 임시로 conversation_states 테이블 사용 (ai_conversations 테이블이 아직 생성되지 않음)
+    // 즉시 응답을 위한 자연스러운 대화형 메시지 (AI와 대화 중임을 숨김)
+    let immediateResponse;
+    
+    // 첫 번째 메시지인지 확인 (대화 히스토리가 비어있거나 첫 번째 메시지인 경우)
+    if (!aiState || !aiState.temp_data?.conversation_history || aiState.temp_data.conversation_history.length === 0) {
+      // 첫 번째 메시지: 자연스러운 시작
+      immediateResponse = {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "안녕하세요! 오늘도 3분 커리어와 함께하시는군요. 어떤 이야기를 나누고 싶으신가요? 😊"
+            }
+          }]
+        }
+      };
+    } else {
+      // 대화 중: 자연스러운 생각하는 중 메시지
+      const naturalResponses = [
+        "음... 🤔 그건 정말 흥미로운 주제네요! 잠깐 생각해볼게요.",
+        "아, 그런 질문이군요! 좀 더 구체적으로 생각해보겠습니다.",
+        "흠... 🤔 그 부분에 대해 좀 더 깊이 생각해보고 있어요.",
+        "오, 좋은 지적이에요! 잠시 정리해보겠습니다.",
+        "그건 정말 중요한 포인트네요. 차근차근 정리해볼게요.",
+        "음... 🤔 그 부분에 대해 좀 더 자세히 살펴보겠습니다.",
+        "아, 그런 관점도 있군요! 잠깐 생각해보겠습니다.",
+        "흥미로운 질문이에요! 좀 더 구체적으로 정리해보겠습니다."
+      ];
+      
+      const randomResponse = naturalResponses[Math.floor(Math.random() * naturalResponses.length)];
+      
+      immediateResponse = {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: randomResponse
+            }
+          }]
+        }
+      };
+    }
+    
+    // 비동기로 AI 응답 처리 (백그라운드에서 실행)
+    processAIAgentResponse(userId, message).catch(error => {
+      console.error('❌ AI 응답 처리 중 오류:', error);
+    });
+    
+    // 즉시 응답 반환 (5초 타임아웃 방지)
+    return immediateResponse;
+    
+  } catch (error) {
+    console.error('AI 대화 처리 오류:', error);
+    return {
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: "AI 대화 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+          }
+        }]
+      }
+    };
+  }
+}
+
+// 비동기 AI 응답 처리 함수
+async function processAIAgentResponse(userId, message) {
+  try {
+    console.log('🔄 비동기 AI 응답 처리 시작...');
+    
+    // 임시로 conversation_states 테이블 사용
     let { data: aiState } = await supabase
       .from('conversation_states')
       .select('*')
@@ -142,10 +231,12 @@ async function handleAIConversation(userId, message) {
         .insert({
           kakao_user_id: userId,
           current_step: 'ai_conversation',
-          temp_data: {
-            conversation_history: [],
-            current_topic: '3분커리어'
-          },
+                  temp_data: {
+          conversation_history: [
+            { role: 'assistant', content: '안녕하세요! 오늘도 3분 커리어와 함께하시는군요. 어떤 이야기를 나누고 싶으신가요? 😊' }
+          ],
+          current_topic: '3분커리어'
+        },
           updated_at: new Date()
         })
         .select()
@@ -153,16 +244,7 @@ async function handleAIConversation(userId, message) {
 
       if (insertError) {
         console.error('❌ AI 대화 상태 생성 오류:', insertError);
-        return {
-          version: "2.0",
-          template: {
-            outputs: [{
-              simpleText: {
-                text: "AI 대화를 시작하는 중 오류가 발생했습니다. 다시 시도해주세요."
-              }
-            }]
-          }
-        };
+        return;
       }
       aiState = newState;
       console.log('✅ AI 대화 상태 생성 성공');
@@ -203,29 +285,11 @@ async function handleAIConversation(userId, message) {
     } else {
       console.log('✅ 대화 히스토리 저장 성공');
     }
-
-    return {
-      version: "2.0",
-      template: {
-        outputs: [{
-          simpleText: {
-            text: aiResponse
-          }
-        }]
-      }
-    };
+    
+    console.log('🎯 AI 응답 완료:', aiResponse);
+    
   } catch (error) {
-    console.error('AI 대화 처리 오류:', error);
-    return {
-      version: "2.0",
-      template: {
-        outputs: [{
-          simpleText: {
-            text: "AI 대화 처리 중 오류가 발생했습니다. 다시 시도해주세요."
-          }
-        }]
-      }
-    };
+    console.error('❌ AI 응답 처리 중 오류:', error);
   }
 }
 
