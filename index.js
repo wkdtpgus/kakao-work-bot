@@ -397,7 +397,31 @@ app.post('/webhook', async (req, res) => {
     console.log('🔍 현재 대화 상태:', state ? state.current_step : '없음');
     console.log('📝 상태 상세:', state);
 
-        // 진행 중인 대화가 있으면 우선 처리
+    // "3분 커리어" 키워드가 포함된 경우 우선 처리 (어떤 상황에서든)
+    if (userMessage === "오늘의 3분 커리어 시작!" || userMessage.includes("3분 커리어")) {
+      console.log('🚀 3분 커리어 키워드 감지 - 우선 처리');
+      
+      // 기존 상태가 있으면 삭제하고 새로 시작
+      if (state) {
+        await supabase.from('conversation_states').delete()
+          .eq('kakao_user_id', userId);
+        console.log('🗑️ 기존 상태 삭제 완료');
+      }
+      
+      // ai_intro 단계로 새로 시작
+      await supabase.from('conversation_states').upsert({
+        kakao_user_id: userId,
+        current_step: 'ai_intro',
+        temp_data: {},
+        updated_at: new Date()
+      });
+      
+      response = await handleAIConversation(userId, userMessage);
+      res.json(response);
+      return;
+    }
+
+    // 진행 중인 대화가 있으면 우선 처리
     if (state && state.current_step) {
       console.log('Found active conversation:', state.current_step);
       console.log('🎯 상태별 처리 분기 시작...');
@@ -453,9 +477,63 @@ app.post('/webhook', async (req, res) => {
           console.log('✅ ai_conversation 단계로 성공적으로 전환됨');
         }
         
-        // 이제 AI Agent와 실제 대화 시작
-        console.log('🤖 AI Agent 대화 시작 - handleAIConversation 호출');
-        response = await handleAIConversation(userId, userMessage);
+        // 상태 전환 후 즉시 AI Agent와 대화 시작 (별도 상태 조회 없이)
+        console.log('🤖 AI Agent 대화 시작 - 직접 처리');
+        
+        // ChatGPT API 직접 호출
+        try {
+          const conversationHistory = [
+            { role: 'assistant', content: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!` },
+            { role: 'user', content: userMessage }
+          ];
+          
+          console.log('🤖 ChatGPT API 호출 중...');
+          const aiResponse = await callChatGPT(userMessage, conversationHistory);
+          console.log('✅ ChatGPT 응답 받음:', aiResponse);
+          
+          // 대화 히스토리 업데이트
+          const updatedHistory = [
+            ...conversationHistory,
+            { role: 'assistant', content: aiResponse }
+          ];
+          
+          // 데이터베이스 업데이트
+          await supabase
+            .from('conversation_states')
+            .update({
+              temp_data: {
+                ...state.temp_data,
+                conversation_history: updatedHistory
+              },
+              updated_at: new Date()
+            })
+            .eq('kakao_user_id', userId)
+            .eq('current_step', 'ai_conversation');
+          
+          response = {
+            version: "2.0",
+            template: {
+              outputs: [{
+                simpleText: {
+                  text: aiResponse
+                }
+              }]
+            }
+          };
+          
+        } catch (error) {
+          console.error('❌ AI 응답 생성 실패:', error);
+          response = {
+            version: "2.0",
+            template: {
+              outputs: [{
+                simpleText: {
+                  text: "AI 응답을 생성하는 중 오류가 발생했습니다. 다시 시도해주세요."
+                }
+              }]
+            }
+          };
+        }
       } else if (state.current_step === 'ai_conversation') {
         console.log('🤖 AI Agent 대화 진행 중 - handleAIConversation 호출');
         // AI Agent 대화 진행 중
