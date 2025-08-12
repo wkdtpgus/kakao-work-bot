@@ -257,6 +257,15 @@ app.post('/webhook', async (req, res) => {
     console.log('- SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '✅' : '❌');
     console.log('- OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅' : '❌');
     
+    // 환경 변수 값 상세 로깅 (보안을 위해 일부만)
+    if (process.env.SUPABASE_URL) {
+      console.log('🔗 SUPABASE_URL:', process.env.SUPABASE_URL.substring(0, 30) + '...');
+    }
+    if (process.env.SUPABASE_ANON_KEY) {
+      console.log('🔑 SUPABASE_ANON_KEY 길이:', process.env.SUPABASE_ANON_KEY.length);
+      console.log('🔑 SUPABASE_ANON_KEY 시작:', process.env.SUPABASE_ANON_KEY.substring(0, 20) + '...');
+    }
+    
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
     const userMessage = userRequest.utterance;
