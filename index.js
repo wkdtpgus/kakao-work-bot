@@ -48,9 +48,16 @@ app.post('/webhook', async (req, res) => {
     if (state && state.current_step) {
       console.log('Found active conversation:', state.current_step);
       
-      if (state.current_step === 'name_input' || 
+      if (state.current_step === 'onboarding_start' || 
+          state.current_step === 'name_input' || 
           state.current_step === 'job_input' || 
-          state.current_step === 'project_input') {
+          state.current_step === 'total_years' ||
+          state.current_step === 'job_years' ||
+          state.current_step === 'career_goal' ||
+          state.current_step === 'project_name' ||
+          state.current_step === 'recent_work' ||
+          state.current_step === 'job_meaning' ||
+          state.current_step === 'important_thing') {
         // 온보딩 진행 중
         response = await handleOnboarding(userId, userMessage);
       } else if (state.current_step === 'work_content' || 
