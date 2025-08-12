@@ -233,6 +233,25 @@ async function handleOnboarding(userId, message) {
     };
   }
 
+  if (state.current_step === 'onboarding_start') {
+    // 이름 입력 단계
+    await supabase.from('conversation_states').update({
+      current_step: 'name_input',
+      updated_at: new Date()
+    }).eq('kakao_user_id', userId);
+
+    return {
+      version: "2.0",
+      template: {
+        outputs: [{
+          simpleText: {
+            text: "당신을 어떻게 부르면 될까요? 이름이나 별명을 알려주세요!"
+          }
+        }]
+      }
+    };
+  }
+
   if (state.current_step === 'name_input') {
     // 직무 입력 단계로
     await supabase.from('conversation_states').update({
