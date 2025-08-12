@@ -236,12 +236,33 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'name_input') {
-    await supabase.from('conversation_states').upsert({
-      kakao_user_id: userId,
-      current_step: 'job_input',
-      temp_data: { name: message },
-      updated_at: new Date()
-    });
+    console.log('Processing name_input step');
+    console.log('User input name:', message);
+    
+    const { data: updateResult, error: updateError } = await supabase
+      .from('conversation_states')
+      .upsert({
+        kakao_user_id: userId,
+        current_step: 'job_input',
+        temp_data: { name: message },
+        updated_at: new Date()
+      });
+    
+    if (updateError) {
+      console.error('Error updating conversation state:', updateError);
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "데이터베이스 오류가 발생했습니다. 다시 시도해주세요."
+            }
+          }]
+        }
+      };
+    }
+    
+    console.log('Update result:', updateResult);
 
     return {
       version: "2.0",
