@@ -7,12 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 환경 변수 로깅 추가
-console.log('🔍 환경 변수 확인:');
-console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '설정됨' : '설정되지 않음');
-console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '설정됨 (길이: ' + process.env.SUPABASE_ANON_KEY.length + ')' : '설정되지 않음');
-console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '설정됨 (길이: ' + process.env.OPENAI_API_KEY.length + ')' : '설정되지 않음');
-console.log('PORT:', process.env.PORT || '3000 (기본값)');
+
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -22,7 +17,6 @@ const supabase = createClient(
 // Supabase 연결 테스트
 async function testSupabaseConnection() {
   try {
-    console.log('🔌 Supabase 연결 테스트 시작...');
     const { data, error } = await supabase.from('users').select('count').limit(1);
     
     if (error) {
@@ -31,7 +25,6 @@ async function testSupabaseConnection() {
     }
     
     console.log('✅ Supabase 연결 성공!');
-    console.log('📊 테스트 쿼리 결과:', data);
     return true;
   } catch (err) {
     console.error('❌ Supabase 연결 테스트 중 오류:', err);
@@ -130,6 +123,8 @@ async function callChatGPT(message, conversationHistory = []) {
 async function handleAIConversation(userId, message) {
   try {
     console.log('🤖 AI Agent 대화 시작:', userId);
+    console.log('📨 받은 메시지:', message);
+    console.log('🔄 함수 실행 시작...');
     
     // 임시로 conversation_states 테이블 사용 (ai_conversations 테이블이 아직 생성되지 않음)
     let { data: aiState } = await supabase
@@ -275,19 +270,6 @@ app.get('/', (req, res) => {
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📨 웹훅 요청 수신');
-    console.log('🔍 환경 변수 상태 확인:');
-    console.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✅' : '❌');
-    console.log('- SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '✅' : '❌');
-    console.log('- OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅' : '❌');
-    
-    // 환경 변수 값 상세 로깅 (보안을 위해 일부만)
-    if (process.env.SUPABASE_URL) {
-      console.log('🔗 SUPABASE_URL:', process.env.SUPABASE_URL.substring(0, 30) + '...');
-    }
-    if (process.env.SUPABASE_ANON_KEY) {
-      console.log('🔑 SUPABASE_ANON_KEY 길이:', process.env.SUPABASE_ANON_KEY.length);
-      console.log('🔑 SUPABASE_ANON_KEY 시작:', process.env.SUPABASE_ANON_KEY.substring(0, 20) + '...');
-    }
     
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
@@ -313,8 +295,9 @@ app.post('/webhook', async (req, res) => {
         // 진행 중인 대화가 있으면 우선 처리
     if (state && state.current_step) {
       console.log('Found active conversation:', state.current_step);
+      console.log('🎯 상태별 처리 분기 시작...');
       
-              if (state.current_step === 'onboarding_start' || 
+      if (state.current_step === 'onboarding_start' || 
             state.current_step === 'name_input' || 
             state.current_step === 'job_input' || 
             state.current_step === 'total_years' ||
@@ -324,9 +307,11 @@ app.post('/webhook', async (req, res) => {
             state.current_step === 'recent_work' ||
             state.current_step === 'job_meaning' ||
             state.current_step === 'important_thing') {
+        console.log('📚 온보딩 진행 중 - handleOnboarding 호출');
         // 온보딩 진행 중
         response = await handleOnboarding(userId, userMessage);
       } else if (state.current_step === 'ai_conversation') {
+        console.log('🤖 AI Agent 대화 진행 중 - handleAIConversation 호출');
         // AI Agent 대화 진행 중
         response = await handleAIConversation(userId, userMessage);
       } else {
@@ -798,12 +783,11 @@ app.listen(PORT, async () => {
   console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다.`);
   
   // 서버 시작 후 DB 연결 테스트
-  console.log('🔄 DB 연결 테스트 시작...');
   const dbConnected = await testSupabaseConnection();
   
   if (dbConnected) {
     console.log('🎉 모든 시스템이 정상적으로 작동 중입니다!');
   } else {
-    console.log('⚠️ DB 연결에 문제가 있습니다. 환경 변수를 확인해주세요.');
+    console.log('⚠️ DB 연결에 문제가 있습니다.');
   }
 });
