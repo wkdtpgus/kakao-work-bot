@@ -92,11 +92,6 @@ app.post('/webhook', async (req, res) => {
           state.current_step === 'important_thing') {
         // 온보딩 진행 중
         response = await handleOnboarding(userId, userMessage);
-      } else if (state.current_step === 'work_content' || 
-                 state.current_step === 'mood_input' || 
-                 state.current_step === 'achievements') {
-        // 업무 기록 진행 중
-        response = await handleWorkRecord(userId, userMessage);
       } else {
         // 알 수 없는 상태 - 초기화 후 웰컴으로
         console.log('Unknown state, clearing:', state.current_step);
@@ -109,8 +104,6 @@ app.post('/webhook', async (req, res) => {
       // action.name은 무시하고 userMessage로 판단
       if (userMessage === "온보딩 시작" || userMessage === "온보딩") {
         response = await handleOnboarding(userId, userMessage);
-      } else if (userMessage === "업무 기록" || userMessage === "일일기록") {
-        response = await handleDailyRecord(userId);
       } else if (userMessage === "웰컴" || userMessage === "메인") {
         response = await handleWelcome(userId);
       } else {
@@ -150,7 +143,7 @@ async function handleWelcome(userId) {
       template: {
         outputs: [{
           simpleText: {
-            text: "안녕하세요! 일일 업무 기록봇입니다.\n먼저 간단한 정보를 입력해주세요."
+            text: "안녕하세요! 3분커리어 온보딩봇입니다.\n먼저 간단한 정보를 입력해주세요."
           }
         }],
         quickReplies: [{
@@ -184,19 +177,14 @@ async function handleWelcome(userId) {
       template: {
         outputs: [{
           simpleText: {
-            text: `안녕하세요 ${user.name}님!\n${user.attendance_count}일째 기록 중이시네요! 💪`
+            text: `안녕하세요 ${user.name}님!\n온보딩이 완료되었습니다! 🎉`
           }
         }],
         quickReplies: [
           {
-            label: "업무기록",
-            action: "message", 
-            messageText: "업무 기록"
-          },
-          {
-            label: "쉬기",
+            label: "완료",
             action: "message",
-            messageText: "쉬기"
+            messageText: "완료"
           }
         ]
       }
