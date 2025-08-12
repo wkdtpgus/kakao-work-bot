@@ -239,6 +239,14 @@ async function handleOnboarding(userId, message) {
     console.log('Processing name_input step');
     console.log('User input name:', message);
     
+    console.log('Attempting to update conversation state...');
+    console.log('Update data:', {
+      kakao_user_id: userId,
+      current_step: 'job_input',
+      temp_data: { name: message },
+      updated_at: new Date()
+    });
+    
     const { data: updateResult, error: updateError } = await supabase
       .from('conversation_states')
       .upsert({
@@ -247,6 +255,9 @@ async function handleOnboarding(userId, message) {
         temp_data: { name: message },
         updated_at: new Date()
       });
+    
+    console.log('Supabase response - data:', updateResult);
+    console.log('Supabase response - error:', updateError);
     
     if (updateError) {
       console.error('Error updating conversation state:', updateError);
