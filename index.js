@@ -275,6 +275,9 @@ app.post('/webhook', async (req, res) => {
       .eq('kakao_user_id', userId)
       .single();
 
+    console.log('🔍 현재 대화 상태:', state ? state.current_step : '없음');
+    console.log('📝 상태 상세:', state);
+
         // 진행 중인 대화가 있으면 우선 처리
     if (state && state.current_step) {
       console.log('Found active conversation:', state.current_step);
@@ -439,13 +442,20 @@ async function handleOnboarding(userId, message) {
     .single();
 
   if (!state || !state.current_step) {
+    console.log('🚀 새로운 온보딩 시작 - 상태 생성 중...');
     // 온보딩 시작 단계
-    await supabase.from('conversation_states').upsert({
+    const { data: insertResult, error: insertError } = await supabase.from('conversation_states').upsert({
       kakao_user_id: userId,
       current_step: 'onboarding_start',
       temp_data: {},
       updated_at: new Date()
     });
+    
+    if (insertError) {
+      console.error('❌ 상태 생성 실패:', insertError);
+    } else {
+      console.log('✅ 상태 생성 성공:', insertResult);
+    }
 
     return {
       version: "2.0",
@@ -465,22 +475,43 @@ async function handleOnboarding(userId, message) {
   }
 
   if (state.current_step === 'onboarding_start') {
-    // 이름 입력 단계
-    await supabase.from('conversation_states').update({
-      current_step: 'name_input',
-      updated_at: new Date()
-    }).eq('kakao_user_id', userId);
+    console.log('🎯 onboarding_start 단계 처리 중...');
+    console.log('사용자 메시지:', message);
+    
+    // "네 알겠습니다!" 메시지인 경우에만 다음 단계로 진행
+    if (message === "네 알겠습니다!" || message.includes("알겠습니다")) {
+      console.log('✅ "네 알겠습니다!" 감지, name_input으로 진행');
+      
+      // 이름 입력 단계
+      await supabase.from('conversation_states').update({
+        current_step: 'name_input',
+        updated_at: new Date()
+      }).eq('kakao_user_id', userId);
 
-    return {
-      version: "2.0",
-      template: {
-        outputs: [{
-          simpleText: {
-            text: "당신을 어떻게 부르면 될까요? 이름이나 별명을 알려주세요!"
-          }
-        }]
-      }
-    };
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "당신을 어떻게 부르면 될까요? 이름이나 별명을 알려주세요!"
+            }
+          }]
+        }
+      };
+    } else {
+      console.log('❌ "네 알겠습니다!"가 아님, 현재 단계 유지');
+      // 다른 메시지인 경우 현재 단계 유지
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "온보딩을 시작하려면 '네 알겠습니다!'라고 답변해주세요."
+            }
+          }]
+        }
+      };
+    }
   }
 
   if (state.current_step === 'name_input') {
