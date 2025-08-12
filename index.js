@@ -129,27 +129,35 @@ async function callChatGPT(message, conversationHistory = []) {
 // AI Agent 대화 처리
 async function handleAIConversation(userId, message) {
   try {
-    // AI 대화 상태 확인
+    console.log('🤖 AI Agent 대화 시작:', userId);
+    
+    // 임시로 conversation_states 테이블 사용 (ai_conversations 테이블이 아직 생성되지 않음)
     let { data: aiState } = await supabase
-      .from('ai_conversations')
+      .from('conversation_states')
       .select('*')
       .eq('kakao_user_id', userId)
+      .eq('current_step', 'ai_conversation')
       .single();
 
     if (!aiState) {
+      console.log('🆕 새로운 AI 대화 상태 생성 중...');
       // 새로운 AI 대화 시작
       const { data: newState, error: insertError } = await supabase
-        .from('ai_conversations')
+        .from('conversation_states')
         .insert({
           kakao_user_id: userId,
-          conversation_history: [],
-          current_topic: '3분커리어'
+          current_step: 'ai_conversation',
+          temp_data: {
+            conversation_history: [],
+            current_topic: '3분커리어'
+          },
+          updated_at: new Date()
         })
         .select()
         .single();
 
       if (insertError) {
-        console.error('AI 대화 상태 생성 오류:', insertError);
+        console.error('❌ AI 대화 상태 생성 오류:', insertError);
         return {
           version: "2.0",
           template: {
@@ -162,13 +170,17 @@ async function handleAIConversation(userId, message) {
         };
       }
       aiState = newState;
+      console.log('✅ AI 대화 상태 생성 성공');
     }
 
     // 대화 히스토리 구성
-    const conversationHistory = aiState.conversation_history || [];
+    const conversationHistory = aiState.temp_data?.conversation_history || [];
+    console.log('📝 현재 대화 히스토리 길이:', conversationHistory.length);
     
     // ChatGPT API 호출
+    console.log('🤖 ChatGPT API 호출 중...');
     const aiResponse = await callChatGPT(message, conversationHistory);
+    console.log('✅ ChatGPT 응답 받음');
     
     // 대화 히스토리 업데이트
     const updatedHistory = [
@@ -178,13 +190,24 @@ async function handleAIConversation(userId, message) {
     ];
 
     // 데이터베이스 업데이트
-    await supabase
-      .from('ai_conversations')
+    console.log('💾 대화 히스토리 저장 중...');
+    const { error: updateError } = await supabase
+      .from('conversation_states')
       .update({
-        conversation_history: updatedHistory,
+        temp_data: {
+          ...aiState.temp_data,
+          conversation_history: updatedHistory
+        },
         updated_at: new Date()
       })
-      .eq('kakao_user_id', userId);
+      .eq('kakao_user_id', userId)
+      .eq('current_step', 'ai_conversation');
+      
+    if (updateError) {
+      console.error('❌ 대화 히스토리 저장 실패:', updateError);
+    } else {
+      console.log('✅ 대화 히스토리 저장 성공');
+    }
 
     return {
       version: "2.0",
