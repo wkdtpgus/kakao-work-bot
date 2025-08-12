@@ -7,10 +7,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 환경 변수 로깅 추가
+console.log('🔍 환경 변수 확인:');
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '설정됨' : '설정되지 않음');
+console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '설정됨 (길이: ' + process.env.SUPABASE_ANON_KEY.length + ')' : '설정되지 않음');
+console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '설정됨 (길이: ' + process.env.OPENAI_API_KEY.length + ')' : '설정되지 않음');
+console.log('PORT:', process.env.PORT || '3000 (기본값)');
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
+
+// Supabase 연결 테스트
+async function testSupabaseConnection() {
+  try {
+    console.log('🔌 Supabase 연결 테스트 시작...');
+    const { data, error } = await supabase.from('users').select('count').limit(1);
+    
+    if (error) {
+      console.error('❌ Supabase 연결 실패:', error);
+      return false;
+    }
+    
+    console.log('✅ Supabase 연결 성공!');
+    console.log('📊 테스트 쿼리 결과:', data);
+    return true;
+  } catch (err) {
+    console.error('❌ Supabase 연결 테스트 중 오류:', err);
+    return false;
+  }
+}
 
 // 키워드 추출 함수들
 function extractJobTitle(text) {
@@ -224,6 +251,12 @@ app.get('/', (req, res) => {
 // 웹훅 엔드포인트 - 대화 연속성 수정
 app.post('/webhook', async (req, res) => {
   try {
+    console.log('📨 웹훅 요청 수신');
+    console.log('🔍 환경 변수 상태 확인:');
+    console.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✅' : '❌');
+    console.log('- SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '✅' : '❌');
+    console.log('- OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅' : '❌');
+    
     const { userRequest, action } = req.body;
     const userId = userRequest.user.id;
     const userMessage = userRequest.utterance;
@@ -698,6 +731,16 @@ async function handleOnboarding(userId, message) {
 
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다.`);
+  
+  // 서버 시작 후 DB 연결 테스트
+  console.log('🔄 DB 연결 테스트 시작...');
+  const dbConnected = await testSupabaseConnection();
+  
+  if (dbConnected) {
+    console.log('🎉 모든 시스템이 정상적으로 작동 중입니다!');
+  } else {
+    console.log('⚠️ DB 연결에 문제가 있습니다. 환경 변수를 확인해주세요.');
+  }
 });
