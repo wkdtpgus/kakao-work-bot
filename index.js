@@ -44,7 +44,7 @@ app.post('/webhook', async (req, res) => {
       .eq('kakao_user_id', userId)
       .single();
 
-    // 진행 중인 대화가 있으면 우선 처리
+        // 진행 중인 대화가 있으면 우선 처리
     if (state && state.current_step) {
       console.log('Found active conversation:', state.current_step);
       
@@ -67,47 +67,16 @@ app.post('/webhook', async (req, res) => {
       }
     } else {
       // 진행 중인 대화가 없을 때만 액션에 따라 처리
-      switch (actionId) {
-        case '웰컴':
-          response = await handleWelcome(userId);
-          break;
-        case '온보딩':
-          // 업무 기록 진행 중인지 확인
-          const { data: existingState } = await supabase
-            .from('conversation_states')
-            .select('*')
-            .eq('kakao_user_id', userId)
-            .single();
-          
-          if (existingState && 
-              (existingState.current_step === 'work_content' || 
-               existingState.current_step === 'mood_input' || 
-               existingState.current_step === 'achievements')) {
-            // 업무 기록 진행 중이면 온보딩 무시하고 현재 상태 유지
-            console.log('Onboarding action ignored - work record in progress');
-            response = await getCurrentStepMessage(existingState.current_step);
-          } else {
-            // 온보딩 진행
-            response = await handleOnboarding(userId, userMessage);
-          }
-          break;
-        case '일일기록':
-          response = await handleDailyRecord(userId);
-          break;
-        case '업무기록':
-          response = await handleWorkRecord(userId, userMessage);
-          break;
-        default:
-          response = {
-            version: "2.0",
-            template: {
-              outputs: [{
-                simpleText: {
-                  text: `알 수 없는 명령입니다.\n받은 액션: ${actionId}\n메시지: ${userMessage}`
-                }
-              }]
-            }
-          };
+      // action.name은 무시하고 userMessage로 판단
+      if (userMessage === "온보딩 시작" || userMessage === "온보딩") {
+        response = await handleOnboarding(userId, userMessage);
+      } else if (userMessage === "업무 기록" || userMessage === "일일기록") {
+        response = await handleDailyRecord(userId);
+      } else if (userMessage === "웰컴" || userMessage === "메인") {
+        response = await handleWelcome(userId);
+      } else {
+        // 기본적으로 웰컴으로
+        response = await handleWelcome(userId);
       }
     }
     
@@ -517,13 +486,34 @@ async function handleWorkRecord(userId, message) {
   }
 
   if (state.current_step === 'work_content') {
+    console.log('Processing work_content step');
+    console.log('Work content:', message);
+    
     // 기분 입력 단계로
-    await supabase.from('conversation_states').upsert({
-      kakao_user_id: userId,
-      current_step: 'mood_input',
-      temp_data: { work_content: message },
-      updated_at: new Date()
-    });
+    const { data: updateResult, error: updateError } = await supabase
+      .from('conversation_states')
+      .update({
+        current_step: 'mood_input',
+        temp_data: { work_content: message },
+        updated_at: new Date()
+      })
+      .eq('kakao_user_id', userId);
+    
+    if (updateError) {
+      console.error('Error updating work content:', updateError);
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "데이터베이스 오류가 발생했습니다. 다시 시도해주세요."
+            }
+          }]
+        }
+      };
+    }
+    
+    console.log('Work content update result:', updateResult);
 
     return {
       version: "2.0",
@@ -543,14 +533,38 @@ async function handleWorkRecord(userId, message) {
   }
 
   if (state.current_step === 'mood_input') {
+    console.log('Processing mood_input step');
+    console.log('Current temp_data:', state.temp_data);
+    console.log('New mood:', message);
+    
     // 성과 입력 단계로
     const tempData = { ...state.temp_data, mood: message };
-    await supabase.from('conversation_states').upsert({
-      kakao_user_id: userId,
-      current_step: 'achievements',
-      temp_data: tempData,
-      updated_at: new Date()
-    });
+    console.log('Updated temp_data:', tempData);
+    
+    const { data: updateResult, error: updateError } = await supabase
+      .from('conversation_states')
+      .update({
+        current_step: 'achievements',
+        temp_data: tempData,
+        updated_at: new Date()
+      })
+      .eq('kakao_user_id', userId);
+    
+    if (updateError) {
+      console.error('Error updating mood:', updateError);
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "데이터베이스 오류가 발생했습니다. 다시 시도해주세요."
+            }
+          }]
+        }
+      };
+    }
+    
+    console.log('Mood update result:', updateResult);
 
     return {
       version: "2.0",
