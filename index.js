@@ -72,7 +72,24 @@ app.post('/webhook', async (req, res) => {
           response = await handleWelcome(userId);
           break;
         case '온보딩':
-          response = await handleOnboarding(userId, userMessage);
+          // 업무 기록 진행 중인지 확인
+          const { data: existingState } = await supabase
+            .from('conversation_states')
+            .select('*')
+            .eq('kakao_user_id', userId)
+            .single();
+          
+          if (existingState && 
+              (existingState.current_step === 'work_content' || 
+               existingState.current_step === 'mood_input' || 
+               existingState.current_step === 'achievements')) {
+            // 업무 기록 진행 중이면 온보딩 무시하고 현재 상태 유지
+            console.log('Onboarding action ignored - work record in progress');
+            response = await getCurrentStepMessage(existingState.current_step);
+          } else {
+            // 온보딩 진행
+            response = await handleOnboarding(userId, userMessage);
+          }
           break;
         case '일일기록':
           response = await handleDailyRecord(userId);
@@ -622,6 +639,61 @@ async function handleWorkRecord(userId, message) {
       }]
     }
   };
+}
+
+// 현재 단계에 맞는 메시지 반환
+async function getCurrentStepMessage(currentStep) {
+  switch (currentStep) {
+    case 'work_content':
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "오늘 어떤 업무를 하셨나요? 간단히 작성해주세요."
+            }
+          }]
+        }
+      };
+    case 'mood_input':
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "오늘 기분은 어떠셨나요?"
+            }
+          }],
+          quickReplies: [
+            { label: "😊좋음", action: "message", messageText: "좋음" },
+            { label: "😐보통", action: "message", messageText: "보통" },
+            { label: "😔안좋음", action: "message", messageText: "안좋음" }
+          ]
+        }
+      };
+    case 'achievements':
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "오늘의 성과나 배운 점이 있다면 알려주세요."
+            }
+          }]
+        }
+      };
+    default:
+      return {
+        version: "2.0",
+        template: {
+          outputs: [{
+            simpleText: {
+              text: "현재 진행 중인 단계를 확인해주세요."
+            }
+          }]
+        }
+      };
+  }
 }
 
 const PORT = process.env.PORT || 3000;
