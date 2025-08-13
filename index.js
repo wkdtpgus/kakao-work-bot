@@ -39,7 +39,41 @@ function extractJobTitle(text) {
 }
 
 // AI Agent 대화 시스템 - 토큰 절약 버전
-const AI_AGENT_PROMPT = `3분커리어 AI Agent. 친근하게 대화하며 업무 경험을 정리하고 강화. 한국어 사용. 공감 표현과 구체적 질문으로 더 나은 표현 도출. 응답은 공감→질문→정리 순서.`;
+// prompt.text에서 프롬프트 읽기
+const fs = require('fs');
+const path = require('path');
+
+// AI Agent 시스템 프롬프트 읽기
+let AI_AGENT_SYSTEM_PROMPT = '';
+let AI_AGENT_USER_PROMPT_TEMPLATE = '';
+
+try {
+  const promptContent = fs.readFileSync(path.join(__dirname, 'prompt.text'), 'utf8');
+  
+  // AI_AGENT_SYSTEM_PROMPT 추출
+  const systemMatch = promptContent.match(/AI_AGENT_SYSTEM_PROMPT = """([\s\S]*?)"""/);
+  if (systemMatch) {
+    AI_AGENT_SYSTEM_PROMPT = systemMatch[1].trim();
+    console.log('✅ AI Agent 시스템 프롬프트 로드 성공');
+  }
+  
+  // AI_AGENT_USER_PROMPT_TEMPLATE 추출
+  const userMatch = promptContent.match(/AI_AGENT_USER_PROMPT_TEMPLATE = """([\s\S]*?)"""/);
+  if (userMatch) {
+    AI_AGENT_USER_PROMPT_TEMPLATE = userMatch[1].trim();
+    console.log('✅ AI Agent 유저 프롬프트 템플릿 로드 성공');
+  }
+  
+  if (!AI_AGENT_SYSTEM_PROMPT) {
+    throw new Error('시스템 프롬프트를 찾을 수 없습니다');
+  }
+} catch (error) {
+  console.error('❌ 프롬프트 파일 읽기 실패:', error.message);
+  // 폴백 프롬프트 사용
+  AI_AGENT_SYSTEM_PROMPT = `3분커리어 AI Agent. 친근하게 대화하며 업무 경험을 정리하고 강화. 한국어 사용. 공감 표현과 구체적 질문으로 더 나은 표현 도출. 응답은 공감→질문→정리 순서.`;
+  AI_AGENT_USER_PROMPT_TEMPLATE = `# Conversation History\n{conversation_history}\n\n# User's Latest Message\n{user_message}\n\n# Instructions\nBased on the conversation history and user's latest message, provide a helpful response following the AI_AGENT_SYSTEM_PROMPT guidelines.`;
+  console.log('⚠️ 폴백 프롬프트 사용');
+}
 
 // 토큰 절약을 위한 캐싱 시스템
 const responseCache = new Map();
@@ -88,9 +122,11 @@ async function callChatGPT(message, conversationHistory = []) {
       body: JSON.stringify({
         model: 'gpt-3.5-turbo', // gpt-4보다 토큰당 비용이 낮음
         messages: [
-          { role: 'system', content: AI_AGENT_PROMPT },
-          ...truncatedHistory,
-          { role: 'user', content: message.length > 300 ? message.substring(0, 300) + '...' : message }
+          { role: 'system', content: AI_AGENT_SYSTEM_PROMPT },
+          { role: 'user', content: AI_AGENT_USER_PROMPT_TEMPLATE
+            .replace('{conversation_history}', JSON.stringify(truncatedHistory, null, 2))
+            .replace('{user_message}', message.length > 300 ? message.substring(0, 300) + '...' : message)
+          }
         ],
         max_tokens: 300, // 더 빠른 응답을 위해 토큰 수 줄임
         temperature: 0.7
@@ -190,13 +226,15 @@ async function handleAIConversation(userId, message) {
         console.log('✅ ai_intro 단계로 설정 완료');
       }
       
-      // 안내 메시지 표시 (사용자 이름 포함)
+      // 새로운 프롬프트를 활용한 안내 메시지 표시
+      const introMessage = `안녕하세요, 반가워요 ${userName}님! 😊\n\n오늘도 "3분 커리어"와 함께하러 오셨군요. 바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요? 말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!`;
+      
       immediateResponse = {
         version: "2.0",
         template: {
           outputs: [{
             simpleText: {
-              text: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!`
+              text: introMessage
             }
           }]
         }
@@ -482,8 +520,11 @@ app.post('/webhook', async (req, res) => {
         
         // ChatGPT API 직접 호출
         try {
+          // 새로운 프롬프트를 활용한 대화 시작
+          const introMessage = `안녕하세요, 반가워요 ${userName}님! 😊\n\n오늘도 "3분 커리어"와 함께하러 오셨군요. 바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요? 말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!`;
+          
           const conversationHistory = [
-            { role: 'assistant', content: `안녕하세요, 반가워요 ${userName}님! 😊\n오늘도 "3분 커리어"와 함께하러 오셨군요.\n바로 시작해볼까요?\n\n오늘 어떤 업무를 하셨는지 공유해주실 수 있나요?\n말씀해주시면 이력을 위한 메모로 정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!` },
+            { role: 'assistant', content: introMessage },
             { role: 'user', content: userMessage }
           ];
           
