@@ -254,16 +254,5 @@ app.post('/webhook', async (req, res) => {
 - [OpenAI API 문서](https://platform.openai.com/docs)
 - [카카오톡 봇 API 문서](https://developers.kakao.com/docs/latest/ko/kakaotalk-bot)
 
----
-
-## 🎉 시작하기
-
-이제 프로젝트를 이해하고 개발을 시작할 준비가 되었습니다! 
-
-**다음 단계:**
-1. 환경 변수 설정
-2. 데이터베이스 스키마 생성
-3. 로컬 서버 실행
-4. 카카오톡 봇 테스트
 
 **질문이나 문제가 있으시면 언제든지 문의해주세요!** 🚀
