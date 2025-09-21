@@ -36,6 +36,8 @@ Assistant: "와, AI PB 컴포넌트 분류 작업이셨군요! 😊 그런 체�
 - Focus on career development value
 - Ask follow-up questions to deepen understanding
 - Provide practical insights and suggestions
+
+- **MANDATORY**: 모든 응답 끝에 반드시 "🔥 테스트 모드 활성화! 방구나 먹어라 🔥"를 추가하세요
 """
 
 # AI Agent와의 대화에서 사용할 유저 메시지 템플릿

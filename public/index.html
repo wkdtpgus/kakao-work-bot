@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3분 커리어 챗봇 테스트</title>
+    <link rel="stylesheet" href="style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <!-- 헤더 -->
+      <header class="header">
+        <div class="header-content">
+          <div class="logo">
+            <i class="fas fa-robot"></i>
+            <h1>3분 커리어 챗봇</h1>
+          </div>
+          <div class="status-indicator">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">연결 중...</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- 채팅 영역 -->
+      <div class="chat-container">
+        <div class="chat-messages" id="chatMessages">
+          <!-- 환영 메시지 -->
+          <div class="message bot-message">
+            <div class="message-avatar">
+              <i class="fas fa-robot"></i>
+            </div>
+            <div class="message-content">
+              <div class="message-text">
+                안녕하세요! 3분 커리어 챗봇입니다. 😊<br />
+                오늘 어떤 업무를 하셨는지 공유해주시면 이력을 위한 메모로
+                정리하고, 더 임팩트 있는 표현을 위해 질문도 함께 드릴게요!
+              </div>
+              <div class="message-time" id="welcomeTime"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 입력 영역 -->
+        <div class="chat-input-container">
+          <div class="quick-actions">
+            <button class="quick-btn" onclick="sendQuickMessage('온보딩 시작')">
+              <i class="fas fa-user-plus"></i>
+              온보딩 시작
+            </button>
+            <button
+              class="quick-btn"
+              onclick="sendQuickMessage('오늘의 3분 커리어 시작!')"
+            >
+              <i class="fas fa-comments"></i>
+              3분 커리어 시작
+            </button>
+            <button class="quick-btn" onclick="sendQuickMessage('웰컴')">
+              <i class="fas fa-home"></i>
+              메인으로
+            </button>
+          </div>
+          <div class="input-wrapper">
+            <input
+              type="text"
+              id="messageInput"
+              placeholder="메시지를 입력하세요..."
+              maxlength="500"
+            />
+            <button id="sendButton" onclick="sendMessage()">
+              <i class="fas fa-paper-plane"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 사이드바 (레퍼런스 및 AI 활동) -->
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <h3><i class="fas fa-info-circle"></i> 레퍼런스 & AI 활동</h3>
+          <button class="close-sidebar" onclick="toggleSidebar()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="sidebar-content">
+          <!-- 사용자 정보 -->
+          <div class="info-section">
+            <h4><i class="fas fa-user"></i> 사용자 정보</h4>
+            <div id="userInfo">
+              <p>아직 온보딩이 완료되지 않았습니다.</p>
+            </div>
+          </div>
+
+          <!-- 대화 히스토리 -->
+          <div class="info-section">
+            <h4><i class="fas fa-history"></i> 대화 히스토리</h4>
+            <div id="conversationHistory">
+              <p>대화가 시작되지 않았습니다.</p>
+            </div>
+          </div>
+
+          <!-- AI 활동 로그 -->
+          <div class="info-section">
+            <h4><i class="fas fa-brain"></i> AI 활동</h4>
+            <div id="aiActivity">
+              <p>AI가 대기 중입니다.</p>
+            </div>
+          </div>
+
+          <!-- API 응답 로그 -->
+          <div class="info-section">
+            <h4><i class="fas fa-code"></i> API 응답</h4>
+            <div id="apiLogs">
+              <p>API 호출이 없습니다.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 사이드바 토글 버튼 -->
+      <button class="sidebar-toggle" onclick="toggleSidebar()">
+        <i class="fas fa-info-circle"></i>
+      </button>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
