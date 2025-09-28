@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 
-from src.chatbot.simple_chatbot import SimpleChatBot
+from src.chatbot.graph_manager import ChatBotManager
 from src.database import Database
 
 # 환경 변수 로드
@@ -27,7 +27,12 @@ async def get_js():
 
 # 데이터베이스 및 ChatBot 초기화
 db = Database()
-chatbot = SimpleChatBot(db)
+chatbot_manager = ChatBotManager(db)
+
+# 앱 시작 시 초기화
+@app.on_event("startup")
+async def startup_event():
+    await chatbot_manager.initialize()
 
 class ChatRequest(BaseModel):
     userId: str
@@ -142,7 +147,7 @@ async def handle_webhook_request(user_request: dict, action: dict):
             "current_topic": "3분커리어"
         })
 
-        response = await chatbot.handle_conversation(user_id, user_message)
+        response = await chatbot_manager.handle_conversation(user_id, user_message)
         return response
 
     # "3분 커리어" 키워드 처리
@@ -153,7 +158,7 @@ async def handle_webhook_request(user_request: dict, action: dict):
             await db.delete_conversation_state(user_id)
 
         await db.upsert_conversation_state(user_id, "ai_intro", {})
-        response = await chatbot.handle_conversation(user_id, user_message)
+        response = await chatbot_manager.handle_conversation(user_id, user_message)
         return response
 
     # 진행 중인 대화 상태에 따른 처리
@@ -163,9 +168,9 @@ async def handle_webhook_request(user_request: dict, action: dict):
                                    "project_name", "recent_work", "job_meaning", "important_thing"]:
             return await handle_onboarding(user_id, user_message)
         elif state["current_step"] == "ai_intro":
-            return await chatbot.handle_conversation(user_id, user_message)
+            return await chatbot_manager.handle_conversation(user_id, user_message)
         elif state["current_step"] == "ai_conversation":
-            return await chatbot.handle_conversation(user_id, user_message)
+            return await chatbot_manager.handle_conversation(user_id, user_message)
         else:
             # 알 수 없는 상태 - 초기화
             await db.delete_conversation_state(user_id)
@@ -176,7 +181,7 @@ async def handle_webhook_request(user_request: dict, action: dict):
             return await handle_onboarding(user_id, user_message)
         elif user_message in ["오늘의 3분 커리어 시작!"] or "3분 커리어" in user_message:
             await db.upsert_conversation_state(user_id, "ai_intro", {})
-            return await chatbot.handle_conversation(user_id, user_message)
+            return await chatbot_manager.handle_conversation(user_id, user_message)
         else:
             return await handle_welcome(user_id)
 

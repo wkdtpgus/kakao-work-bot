@@ -2,9 +2,36 @@
 LangGraph용 대화 상태 관리
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TypedDict
 from dataclasses import dataclass
 from langchain_core.messages import BaseMessage
+from pydantic import BaseModel, Field
+from typing import Optional
+
+
+class OnboardingResponse(BaseModel):
+    """온보딩 응답 모델"""
+    response: str
+    name: Optional[str] = None
+    job: Optional[str] = None
+    total_experience_year: Optional[int] = None
+    job_experience_year: Optional[int] = None
+    career_goal: Optional[str] = None
+    projects: Optional[str] = None
+    recent_tasks: Optional[str] = None
+    job_meaning: Optional[str] = None
+    work_philosophy: Optional[str] = None
+
+
+class OnboardingState(TypedDict):
+    """전체 플로우 상태"""
+    user_id: str
+    message: str
+    current_state: Dict[str, Any]
+    ai_response: str
+    updated_variables: Dict[str, Any]
+    conversation_history: list
+    next_step: str  # continue_onboarding, daily_reflection, weekly_wrapup
 
 
 @dataclass

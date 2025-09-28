@@ -58,18 +58,8 @@ class MemoryManager:
             print(f"❌ 메모리 업데이트 오류: {e}")
 
     def get_cached_response(self, message: str, conversation_history: List) -> Optional[str]:
-        """캐시된 응답 조회"""
-        cache_key = self._generate_cache_key(message, conversation_history)
-
-        if cache_key in self.cache:
-            cached_data = self.cache[cache_key]
-            if datetime.now().timestamp() - cached_data["timestamp"] < self.cache_ttl:
-                print("💾 캐시된 응답 사용 - 토큰 절약!")
-                return cached_data["response"]
-            else:
-                # 만료된 캐시 삭제
-                del self.cache[cache_key]
-
+        """캐시된 응답 조회 (임시로 비활성화)"""
+        # 온보딩 중에는 캐시 사용하지 않음
         return None
 
     def cache_response(self, message: str, conversation_history: List, response: str):

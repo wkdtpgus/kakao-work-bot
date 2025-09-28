@@ -1,77 +1,36 @@
-"""
-유틸리티 함수들
-"""
-
 import re
 import random
+import os
 from typing import List, Dict, Any
+from langchain_openai import ChatOpenAI
+from ..prompt.onboarding import ONBOARDING_SYSTEM_PROMPT, ONBOARDING_USER_PROMPT_TEMPLATE
 
 
 class PromptLoader:
     """프롬프트 로드 및 관리"""
 
     def __init__(self):
-        self.system_prompt, self.user_prompt_template = self._load_prompts()
+        self.system_prompt = ONBOARDING_SYSTEM_PROMPT
+        self.user_prompt_template = ONBOARDING_USER_PROMPT_TEMPLATE
 
-    def _load_prompts(self) -> tuple[str, str]:
-        """프롬프트 파일에서 로드"""
-        try:
-            with open("prompt.text", "r", encoding="utf-8") as f:
-                content = f.read()
-
-            # 시스템 프롬프트 추출
-            system_match = re.search(r'AI_AGENT_SYSTEM_PROMPT = """([\s\S]*?)"""', content)
-            user_match = re.search(r'AI_AGENT_USER_PROMPT_TEMPLATE = """([\s\S]*?)"""', content)
-
-            system_prompt = system_match.group(1).strip() if system_match else ""
-            user_prompt_template = user_match.group(1).strip() if user_match else ""
-
-            if system_prompt:
-                print("✅ 시스템 프롬프트 로드 성공")
-            if user_prompt_template:
-                print("✅ 유저 프롬프트 템플릿 로드 성공")
-
-            return system_prompt, user_prompt_template
-
-        except Exception as e:
-            print(f"❌ 프롬프트 파일 읽기 실패: {e}")
-            return self._get_fallback_prompts()
-
-    def _get_fallback_prompts(self) -> tuple[str, str]:
-        """폴백 프롬프트"""
-        system_prompt = """
-3분커리어 AI Agent입니다.
-친근하게 대화하며 업무 경험을 정리하고 강화합니다.
-한국어를 사용하며, 공감 표현과 구체적 질문으로 더 나은 표현을 도출합니다.
-응답은 공감→질문→정리 순서로 구성합니다.
-"""
-
-        user_template = """
-# 대화 히스토리
-{conversation_history}
-
-# 사용자 최신 메시지
-{user_message}
-
-# 지시사항
-위 대화 히스토리와 사용자의 최신 메시지를 바탕으로 AI_AGENT_SYSTEM_PROMPT 가이드라인에 따라 도움이 되는 응답을 제공하세요.
-"""
-
-        print("⚠️ 폴백 프롬프트 사용")
-        return system_prompt.strip(), user_template.strip()
+        print("✅ 온보딩 프롬프트 로드 성공")
 
     def get_system_prompt(self) -> str:
         """시스템 프롬프트 반환"""
         return self.system_prompt
 
-    def format_user_prompt(self, message: str, conversation_history: List[Dict]) -> str:
-        """유저 프롬프트 포맷팅"""
-        history_text = self._format_history(conversation_history)
+    def format_user_prompt(self, message: str, current_state: Dict) -> str:
+        """유저 프롬프트 포맷팅 (온보딩용)"""
+        # current_state를 JSON 문자열로 변환
+        import json
+        current_state_json = json.dumps(current_state, ensure_ascii=False, indent=2)
 
-        return self.user_prompt_template.format(
-            conversation_history=history_text,
+        formatted = self.user_prompt_template.format(
+            current_state=current_state_json,
             user_message=message[:300]  # 메시지 길이 제한
         )
+        print(f"🔍 포맷된 프롬프트:\n{formatted}")
+        return formatted
 
     def _format_history(self, history: List[Dict]) -> str:
         """대화 히스토리 포맷팅"""
@@ -147,41 +106,47 @@ class ResponseFormatter:
         return ResponseFormatter.simple_text_response(random.choice(thinking_messages))
 
 
-class TextProcessor:
-    """텍스트 처리 유틸리티"""
 
-    @staticmethod
-    def extract_keywords(text: str) -> List[str]:
-        """키워드 추출"""
-        # 간단한 키워드 추출 (실제로는 더 정교한 NLP 사용 가능)
-        keywords = []
-        common_keywords = ["프로젝트", "업무", "개발", "회의", "분석", "기획", "관리", "성과", "경험"]
 
-        for keyword in common_keywords:
-            if keyword in text:
-                keywords.append(keyword)
+# =============================================================================
+# 온보딩 관련 헬퍼 함수들
+# =============================================================================
 
-        return keywords
+def is_onboarding_complete(current_state: Dict[str, Any]) -> bool:
+    """온보딩 완료 여부 체크"""
+    required_fields = [
+        "name", "job", "total_experience_year", "job_experience_year",
+        "career_goal", "projects", "recent_tasks", "job_meaning", "work_philosophy"
+    ]
 
-    @staticmethod
-    def clean_user_input(text: str) -> str:
-        """사용자 입력 정리"""
-        # 불필요한 문구 제거
-        cleaned = text.replace("입니다", "").replace("이에요", "").strip()
-        return cleaned
+    return all(current_state.get(field) is not None for field in required_fields)
 
-    @staticmethod
-    def extract_job_title(text: str) -> str:
-        """직무명 추출"""
-        return TextProcessor.clean_user_input(text)
 
-    @staticmethod
-    def extract_years(text: str) -> str:
-        """연차 추출"""
-        match = re.search(r'(\d+)년차?', text)
-        return match.group(1) + "년차" if match else text
+async def get_daily_reflections_count(user_id: str, db) -> int:
+    """사용자의 일일 회고 개수 조회"""
+    try:
+        # TODO: 실제 DB에서 일일 회고 개수 조회
+        # 임시로 0 반환
+        return 0
+    except Exception as e:
+        print(f"❌ 일일 회고 개수 조회 실패: {e}")
+        return 0
 
-    @staticmethod
-    def truncate_text(text: str, max_length: int = 200) -> str:
-        """텍스트 길이 제한"""
-        return text[:max_length] + "..." if len(text) > max_length else text
+
+# =============================================================================
+# 모델 로딩 함수들
+# =============================================================================
+
+# 모델 초기화 (lazy loading)
+def get_openai_model():
+    """OpenAI 모델 가져오기 (lazy loading)"""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OpenAI API 키가 필요합니다. 환경변수 OPENAI_API_KEY를 설정해주세요.")
+
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.7,
+        max_tokens=300,
+        timeout=4.0
+    )

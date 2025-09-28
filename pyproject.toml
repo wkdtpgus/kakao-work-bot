@@ -1,3 +1,6 @@
+[tool.poetry]
+package-mode = false
+
 [project]
 name = "kakao-work-bot-py"
 version = "0.1.0"
