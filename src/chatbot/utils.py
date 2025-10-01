@@ -19,17 +19,38 @@ class PromptLoader:
         """시스템 프롬프트 반환"""
         return self.system_prompt
 
-    def format_user_prompt(self, message: str, current_state: Dict) -> str:
-        """유저 프롬프트 포맷팅 (온보딩용)"""
-        # current_state를 JSON 문자열로 변환
+    def format_user_prompt(
+        self,
+        message: str,
+        current_state: Dict,
+        conversation_summary: str = "",
+        conversation_history: List = None
+    ) -> str:
+        """유저 프롬프트 포맷팅 (온보딩용 + 대화 컨텍스트)"""
         import json
+
+        # current_state를 JSON 문자열로 변환
         current_state_json = json.dumps(current_state, ensure_ascii=False, indent=2)
 
+        # 대화 컨텍스트 구성
+        context_text = ""
+        if conversation_summary:
+            context_text += f"\n\n[이전 대화 요약]\n{conversation_summary}\n"
+
+        if conversation_history:
+            context_text += f"\n[최근 대화]\n{self._format_history(conversation_history)}\n"
+
+        # 기본 프롬프트에 컨텍스트 추가
         formatted = self.user_prompt_template.format(
             current_state=current_state_json,
             user_message=message[:300]  # 메시지 길이 제한
         )
-        print(f"🔍 포맷된 프롬프트:\n{formatted}")
+
+        # 컨텍스트가 있으면 추가
+        if context_text:
+            formatted = context_text + "\n" + formatted
+
+        print(f"🔍 포맷된 프롬프트 (컨텍스트 포함):\n{formatted[:500]}...")
         return formatted
 
     def _format_history(self, history: List[Dict]) -> str:
@@ -115,8 +136,8 @@ class ResponseFormatter:
 def is_onboarding_complete(current_state: Dict[str, Any]) -> bool:
     """온보딩 완료 여부 체크"""
     required_fields = [
-        "name", "job", "total_experience_year", "job_experience_year",
-        "career_goal", "projects", "recent_tasks", "job_meaning", "work_philosophy"
+        "name", "job_title", "total_years", "job_years",
+        "career_goal", "project_name", "recent_work", "job_meaning", "important_thing"
     ]
 
     return all(current_state.get(field) is not None for field in required_fields)
@@ -147,6 +168,6 @@ def get_openai_model():
     return ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0.7,
-        max_tokens=300,
-        timeout=4.0
+        max_tokens=800,  # structured output을 위해 증가
+        timeout=30.0  # 타임아웃 30초로 증가
     )

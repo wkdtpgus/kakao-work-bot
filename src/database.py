@@ -138,3 +138,253 @@ class Database:
         except Exception as e:
             print(f"❌ Supabase 연결 실패: {e}")
             return False
+
+    # ============================================
+    # 메모리 관리 메서드 (conversations 테이블)
+    # ============================================
+
+    async def save_message(self, user_id: str, role: str, content: str) -> bool:
+        """대화 메시지 저장 (롱텀 메모리) - ai_conversations 테이블 활용"""
+        if not self.supabase:
+            # Mock 모드: 메모리에만 저장
+            if not hasattr(self, '_mock_conversations'):
+                self._mock_conversations = []
+            self._mock_conversations.append({
+                "user_id": user_id,
+                "role": role,
+                "content": content,
+                "created_at": datetime.now().isoformat()
+            })
+            return True
+
+        try:
+            # 1. 기존 대화 가져오기
+            response = self.supabase.table("ai_conversations") \
+                .select("conversation_history") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            # 2. 대화 히스토리 구성
+            if response.data and len(response.data) > 0:
+                history = response.data[0].get("conversation_history", [])
+            else:
+                history = []
+
+            # 3. 새 메시지 추가
+            history.append({
+                "role": role,
+                "content": content,
+                "created_at": datetime.now().isoformat()
+            })
+
+            # 4. 저장 (upsert)
+            self.supabase.table("ai_conversations").upsert({
+                "kakao_user_id": user_id,
+                "conversation_history": history,
+                "updated_at": datetime.now().isoformat()
+            }).execute()
+
+            return True
+        except Exception as e:
+            print(f"메시지 저장 오류: {e}")
+            return False
+
+    async def get_conversation_history(
+        self,
+        user_id: str,
+        limit: int = 10,
+        offset: int = 0
+    ) -> list:
+        """대화 히스토리 조회 - ai_conversations 테이블에서 JSON 파싱"""
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_conversations'):
+                return []
+
+            user_messages = [
+                msg for msg in self._mock_conversations
+                if msg["user_id"] == user_id
+            ]
+            # offset부터 limit개 가져오기
+            return user_messages[offset:offset + limit]
+
+        try:
+            # ai_conversations 테이블에서 conversation_history JSON 가져오기
+            response = self.supabase.table("ai_conversations") \
+                .select("conversation_history") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if not response.data or len(response.data) == 0:
+                return []
+
+            history = response.data[0].get("conversation_history", [])
+
+            # offset과 limit 적용
+            return history[offset:offset + limit]
+
+        except Exception as e:
+            print(f"대화 히스토리 조회 오류: {e}")
+            return []
+
+    async def count_messages(self, user_id: str) -> int:
+        """사용자의 전체 메시지 개수 - ai_conversations JSON 길이"""
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_conversations'):
+                return 0
+            return len([
+                msg for msg in self._mock_conversations
+                if msg["user_id"] == user_id
+            ])
+
+        try:
+            response = self.supabase.table("ai_conversations") \
+                .select("conversation_history") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if not response.data or len(response.data) == 0:
+                return 0
+
+            history = response.data[0].get("conversation_history", [])
+            return len(history)
+
+        except Exception as e:
+            print(f"메시지 개수 조회 오류: {e}")
+            return 0
+
+    async def delete_conversations(self, user_id: str) -> bool:
+        """사용자의 모든 대화 삭제 - ai_conversations 테이블"""
+        if not self.supabase:
+            # Mock 모드
+            if hasattr(self, '_mock_conversations'):
+                self._mock_conversations = [
+                    msg for msg in self._mock_conversations
+                    if msg["user_id"] != user_id
+                ]
+            return True
+
+        try:
+            # conversation_history를 빈 배열로 업데이트
+            self.supabase.table("ai_conversations") \
+                .update({"conversation_history": []}) \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+            return True
+        except Exception as e:
+            print(f"대화 삭제 오류: {e}")
+            return False
+
+    # ============================================
+    # 요약 관리 메서드 (conversation_states.temp_data에 저장)
+    # ============================================
+
+    async def get_conversation_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """대화 요약 조회 - conversation_states.temp_data에서"""
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_summaries'):
+                self._mock_summaries = {}
+            return self._mock_summaries.get(user_id)
+
+        try:
+            response = self.supabase.table("conversation_states") \
+                .select("temp_data") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if not response.data or len(response.data) == 0:
+                return None
+
+            temp_data = response.data[0].get("temp_data", {})
+            summary_data = temp_data.get("conversation_summary")
+
+            return summary_data if summary_data else None
+
+        except Exception as e:
+            if "PGRST116" in str(e):  # 데이터 없음
+                return None
+            print(f"요약 조회 오류: {e}")
+            return None
+
+    async def save_conversation_summary(
+        self,
+        user_id: str,
+        summary: str,
+        summarized_until: int
+    ) -> bool:
+        """대화 요약 저장 - conversation_states.temp_data에"""
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_summaries'):
+                self._mock_summaries = {}
+            self._mock_summaries[user_id] = {
+                "summary": summary,
+                "summarized_until": summarized_until,
+                "updated_at": datetime.now().isoformat()
+            }
+            return True
+
+        try:
+            # 기존 temp_data 가져오기
+            response = self.supabase.table("conversation_states") \
+                .select("temp_data") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            temp_data = {}
+            if response.data and len(response.data) > 0:
+                temp_data = response.data[0].get("temp_data", {})
+
+            # 요약 데이터 추가
+            temp_data["conversation_summary"] = {
+                "summary": summary,
+                "summarized_until": summarized_until,
+                "updated_at": datetime.now().isoformat()
+            }
+
+            # 저장 (upsert)
+            self.supabase.table("conversation_states") \
+                .upsert({
+                    "kakao_user_id": user_id,
+                    "current_step": "ai_conversation",  # 기본값
+                    "temp_data": temp_data,
+                    "updated_at": datetime.now().isoformat()
+                }) \
+                .execute()
+
+            return True
+        except Exception as e:
+            print(f"요약 저장 오류: {e}")
+            return False
+
+    async def delete_conversation_summary(self, user_id: str) -> bool:
+        """대화 요약 삭제 - conversation_states.temp_data에서"""
+        if not self.supabase:
+            # Mock 모드
+            if hasattr(self, '_mock_summaries') and user_id in self._mock_summaries:
+                del self._mock_summaries[user_id]
+            return True
+
+        try:
+            # temp_data에서 conversation_summary만 제거
+            response = self.supabase.table("conversation_states") \
+                .select("temp_data") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                temp_data = response.data[0].get("temp_data", {})
+                if "conversation_summary" in temp_data:
+                    del temp_data["conversation_summary"]
+
+                    self.supabase.table("conversation_states") \
+                        .update({"temp_data": temp_data}) \
+                        .eq("kakao_user_id", user_id) \
+                        .execute()
+
+            return True
+        except Exception as e:
+            print(f"요약 삭제 오류: {e}")
+            return False

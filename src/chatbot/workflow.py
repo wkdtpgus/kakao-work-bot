@@ -114,6 +114,7 @@ async def handle_onboarding_conversation(user_id: str, message: str, db) -> Dict
             ai_response="",
             updated_variables={},
             conversation_history=[],
+            conversation_summary="",  # 요약 필드 추가
             next_step=""
         )
 

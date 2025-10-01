@@ -13,14 +13,14 @@ class OnboardingResponse(BaseModel):
     """온보딩 응답 모델"""
     response: str
     name: Optional[str] = None
-    job: Optional[str] = None
-    total_experience_year: Optional[int] = None
-    job_experience_year: Optional[int] = None
+    job_title: Optional[str] = None
+    total_years: Optional[str] = None
+    job_years: Optional[str] = None
     career_goal: Optional[str] = None
-    projects: Optional[str] = None
-    recent_tasks: Optional[str] = None
+    project_name: Optional[str] = None
+    recent_work: Optional[str] = None
     job_meaning: Optional[str] = None
-    work_philosophy: Optional[str] = None
+    important_thing: Optional[str] = None
 
 
 class OnboardingState(TypedDict):
@@ -31,6 +31,7 @@ class OnboardingState(TypedDict):
     ai_response: str
     updated_variables: Dict[str, Any]
     conversation_history: list
+    conversation_summary: str  # 대화 요약 (숏텀 메모리)
     next_step: str  # continue_onboarding, daily_reflection, weekly_wrapup
 
 

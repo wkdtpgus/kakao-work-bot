@@ -25,23 +25,28 @@ async def load_user_state(state: OnboardingState, db, memory_manager) -> Onboard
         # 온보딩 상태 구성
         current_state = {
             "name": user.get("name") if user else None,
-            "job": user.get("job") if user else None,
-            "total_experience_year": user.get("total_experience_year") if user else None,
-            "job_experience_year": user.get("job_experience_year") if user else None,
+            "job_title": user.get("job_title") if user else None,
+            "total_years": user.get("total_years") if user else None,
+            "job_years": user.get("job_years") if user else None,
             "career_goal": user.get("career_goal") if user else None,
-            "projects": user.get("projects") if user else None,
-            "recent_tasks": user.get("recent_tasks") if user else None,
+            "project_name": user.get("project_name") if user else None,
+            "recent_work": user.get("recent_work") if user else None,
             "job_meaning": user.get("job_meaning") if user else None,
-            "work_philosophy": user.get("work_philosophy") if user else None
+            "important_thing": user.get("important_thing") if user else None
         }
 
-        # 대화 히스토리 로드
-        conversation_history = await memory_manager.get_conversation_history(user_id, db)
+        # 대화 히스토리 로드 (숏텀 메모리: 요약 + 최근 N개)
+        conversation_context = await memory_manager.get_contextualized_history(user_id, db)
+
+        # 기존 포맷으로 변환 (호환성)
+        conversation_history = conversation_context["recent_turns"]
 
         state["current_state"] = current_state
         state["conversation_history"] = conversation_history
+        state["conversation_summary"] = conversation_context["summary"]  # 요약 추가
 
         print(f"✅ 사용자 상태 로드: {user_id} - name: {current_state.get('name')}")
+        print(f"📊 대화 통계: 전체 {conversation_context['total_count']}개, 요약 {conversation_context['summarized_count']}개")
         return state
 
     except Exception as e:
@@ -109,14 +114,21 @@ async def generate_ai_response(state: OnboardingState, llm, prompt_loader) -> On
 
         message = state["message"]
         current_state = state["current_state"]
+        conversation_summary = state.get("conversation_summary", "")
+        conversation_history = state.get("conversation_history", [])
 
         # LLM이 없으면 에러 발생
         if not llm:
             raise ValueError("OpenAI API 키가 설정되지 않았습니다. 환경변수 OPENAI_API_KEY를 설정해주세요.")
 
-        # 프롬프트 구성
+        # 프롬프트 구성 (대화 컨텍스트 포함)
         system_prompt = prompt_loader.get_system_prompt()
-        user_prompt = prompt_loader.format_user_prompt(message, current_state)
+        user_prompt = prompt_loader.format_user_prompt(
+            message,
+            current_state,
+            conversation_summary,  # 요약 추가
+            conversation_history   # 최근 대화 추가
+        )
 
         # 메시지 구성
         messages = [
@@ -136,8 +148,8 @@ async def generate_ai_response(state: OnboardingState, llm, prompt_loader) -> On
             state["ai_response"] = response.response
             # 모든 필드를 확인해서 None이 아닌 값들을 추출
             updated_vars = {}
-            field_names = ['name', 'job', 'total_experience_year', 'job_experience_year',
-                          'career_goal', 'projects', 'recent_tasks', 'job_meaning', 'work_philosophy']
+            field_names = ['name', 'job_title', 'total_years', 'job_years',
+                          'career_goal', 'project_name', 'recent_work', 'job_meaning', 'important_thing']
 
             for field in field_names:
                 value = getattr(response, field, None)
@@ -180,21 +192,12 @@ async def update_user_info(state: OnboardingState, db, memory_manager=None) -> O
             # 기존 사용자 정보 가져오기
             user = await db.get_user(user_id)
             if not user:
-                user = {"id": user_id}
+                user = {"kakao_user_id": user_id}  # id가 아니라 kakao_user_id!
 
-            # 업데이트된 변수들 적용
+            # 업데이트된 변수들 적용 (유저 응답 그대로 저장)
             for key, value in updated_variables.items():
                 if value is not None:  # None이 아닌 값만 업데이트
-                    # 값 정리 (불필요한 문자 제거)
-                    if isinstance(value, str):
-                        # 특수 문자 제거
-                        cleaned_value = value.strip()
-                        # JSON 관련 문자들 제거
-                        for char in ['}}]}', ']}', '}}', '"]', '"']:
-                            cleaned_value = cleaned_value.replace(char, '')
-                        user[key] = cleaned_value.strip()
-                    else:
-                        user[key] = value
+                    user[key] = value
 
             # 메모리 매니저 캐시 업데이트
             if memory_manager:
