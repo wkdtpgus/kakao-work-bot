@@ -105,14 +105,3 @@ def is_onboarding_complete(current_state: Dict[str, Any]) -> bool:
     return all(current_state.get(field) is not None for field in required_fields)
 
 
-async def get_daily_reflections_count(user_id: str, db) -> int:
-    """사용자의 일일 회고 개수 조회"""
-    try:
-        # TODO: 실제 DB에서 일일 회고 개수 조회
-        # 임시로 0 반환
-        return 0
-    except Exception as e:
-        print(f"❌ 일일 회고 개수 조회 실패: {e}")
-        return 0
-
-
