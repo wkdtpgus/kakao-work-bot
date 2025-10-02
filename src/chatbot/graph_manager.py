@@ -7,10 +7,13 @@ import logging
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
-from .workflow import handle_onboarding_conversation, build_workflow_graph
-from .utils import ResponseFormatter, PromptLoader, get_openai_model
+from .workflow import build_workflow_graph
+from ..utils.models import CHAT_MODEL_CONFIG
+from ..utils.utils import simple_text_response, error_response
 from .memory_manager import MemoryManager
-from .state import OnboardingResponse
+from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
+from langchain_openai import ChatOpenAI
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +30,18 @@ class GraphManager:
     async def init_all_graphs(self):
         """모든 그래프 타입 초기화"""
         try:
-            # 온보딩 워크플로우 초기화
+            # 워크플로우 초기화
             memory_manager = MemoryManager()
-            prompt_loader = PromptLoader()
-            llm = get_openai_model().with_structured_output(OnboardingResponse)
 
-            onboarding_graph = build_workflow_graph(self.db, memory_manager, llm, prompt_loader)
-            self.graph_types["onboarding"] = onboarding_graph
+            # 온보딩용 LLM (structured output)
+            chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
+
+            # 서비스용 LLM (일반 채팅)
+            service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+
+            main_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
+            self.graph_types["main"] = main_graph
 
             logger.info("모든 그래프 타입 초기화 완료")
 
@@ -41,7 +49,7 @@ class GraphManager:
             logger.error(f"그래프 초기화 실패: {e}")
             raise
 
-    def get_or_create_user_graph(self, user_id: str, graph_type: str = "onboarding") -> CompiledStateGraph:
+    def get_or_create_user_graph(self, user_id: str, graph_type: str = "main") -> CompiledStateGraph:
         """유저별 그래프를 가져오거나 생성"""
         user_graph_key = f"{user_id}_{graph_type}"
 
@@ -56,13 +64,17 @@ class GraphManager:
                 raise ValueError(f"지원하지 않는 그래프 타입: {graph_type}")
 
             # 메모리 세이버와 함께 새로운 그래프 컴파일
-            if graph_type == "onboarding":
+            if graph_type == "main":
                 memory_manager = MemoryManager()
-                prompt_loader = PromptLoader()
-                llm = get_openai_model().with_structured_output(OnboardingResponse)
-                user_graph = build_workflow_graph(self.db, memory_manager, llm, prompt_loader)
-                # 메모리 세이버 설정 (필요한 경우)
-                # user_graph = user_graph.with_config({"checkpointer": memory_saver})
+
+                # 온보딩용 LLM
+                chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+                onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
+
+                # 서비스용 LLM
+                service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+
+                user_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
             else:
                 user_graph = base_graph
 
@@ -71,7 +83,7 @@ class GraphManager:
 
         return self.user_graphs[user_graph_key]
 
-    def get_user_graph(self, user_id: str, graph_type: str = "onboarding") -> CompiledStateGraph:
+    def get_user_graph(self, user_id: str, graph_type: str = "main") -> CompiledStateGraph:
         """유저 그래프 가져오기 (없으면 생성)"""
         return self.get_or_create_user_graph(user_id, graph_type)
 
@@ -107,27 +119,8 @@ class GraphManager:
 
     async def determine_graph_type(self, user_id: str, message: str) -> str:
         """메시지와 유저 상태를 기반으로 적절한 그래프 타입 결정"""
-        try:
-            # 사용자 정보 가져오기
-            user = await self.db.get_user(user_id)
-
-            # 온보딩 완료 여부 확인
-            if not user or not user.get("onboarding_completed"):
-                return "onboarding"
-
-            # 키워드 기반 그래프 타입 결정
-            if "온보딩" in message or "처음" in message:
-                return "onboarding"
-            elif "이력서" in message or "resume" in message.lower():
-                return "resume"  # 나중에 구현
-            elif "면접" in message:
-                return "interview"  # 나중에 구현
-            else:
-                return "general"  # 일반 대화 - 나중에 구현
-
-        except Exception as e:
-            logger.error(f"그래프 타입 결정 실패: {e}")
-            return "onboarding"  # 기본값
+        # 통합 구조이므로 항상 main
+        return "main"
 
     def get_available_graph_types(self) -> list:
         """사용 가능한 그래프 타입 목록 반환"""
@@ -157,30 +150,45 @@ class ChatBotManager:
         logger.info("ChatBotManager 초기화 완료")
 
     async def handle_conversation(self, user_id: str, message: str) -> Dict:
-        """대화 처리 - 적절한 그래프 선택하여 실행"""
+        """대화 처리 - 워크플로우 진입점"""
         try:
-            # 적절한 그래프 타입 결정
-            graph_type = await self.graph_manager.determine_graph_type(user_id, message)
-            logger.info(f"선택된 그래프 타입: {graph_type} (유저: {user_id})")
 
-            # 유저별 그래프 가져오기
-            user_graph = self.graph_manager.get_user_graph(user_id, graph_type)
+            # 메모리 매니저 초기화
+            memory_manager = MemoryManager()
 
-            # 그래프 타입별 처리
-            if graph_type == "onboarding":
-                # 온보딩 워크플로우 실행
-                return await handle_onboarding_conversation(user_id, message, self.db)
-            else:
-                # 다른 워크플로우들은 나중에 구현
-                formatter = ResponseFormatter()
-                return formatter.simple_text_response(
-                    f"죄송합니다. '{graph_type}' 기능은 아직 개발 중입니다."
-                )
+            # 온보딩용 LLM
+            chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
+
+            # 서비스용 LLM
+            service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+
+            # 워크플로우 그래프 생성
+            graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
+
+            # 초기 상태 구성
+            initial_state = OverallState(
+                user_id=user_id,
+                message=message,
+                user_context=None,  # router에서 로드
+                user_intent=None,   # service_router에서 결정
+                ai_response="",
+                conversation_history=[],
+                conversation_summary=""
+            )
+
+            # 워크플로우 실행
+            final_state = await graph.ainvoke(initial_state)
+
+            # 최종 응답 반환
+            ai_response = final_state.get("ai_response", "응답 생성 중 오류가 발생했습니다.")
+            return simple_text_response(ai_response)
 
         except Exception as e:
             logger.error(f"대화 처리 실패: {e}")
-            formatter = ResponseFormatter()
-            return formatter.error_response("대화 처리 중 오류가 발생했습니다.")
+            import traceback
+            traceback.print_exc()
+            return error_response("대화 처리 중 오류가 발생했습니다.")
 
 
 # 싱글톤 인스턴스는 main.py에서 생성

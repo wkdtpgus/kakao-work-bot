@@ -42,7 +42,10 @@ class Database:
 
         try:
             user_data["kakao_user_id"] = user_id
-            response = self.supabase.table("users").upsert(user_data).execute()
+            response = self.supabase.table("users").upsert(
+                user_data,
+                on_conflict="kakao_user_id"
+            ).execute()
             return response.data[0] if response.data else None
         except Exception as e:
             print(f"사용자 생성/업데이트 오류: {e}")
@@ -54,12 +57,15 @@ class Database:
             return self._mock_states.get(user_id)
 
         try:
+            print(f"🔍 [DB] get 시도 - user_id: {user_id}")
             response = self.supabase.table("conversation_states").select("*").eq("kakao_user_id", user_id).single().execute()
+            print(f"✅ [DB] get 성공 - data: {response.data}")
             return response.data if response.data else None
         except Exception as e:
             if "PGRST116" in str(e):  # 데이터 없음
+                print(f"⚠️ [DB] 데이터 없음 (PGRST116)")
                 return None
-            print(f"대화 상태 조회 오류: {e}")
+            print(f"❌ [DB] 대화 상태 조회 오류: {e}")
             return None
 
     async def upsert_conversation_state(self, user_id: str, current_step: str, temp_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,10 +86,17 @@ class Database:
                 "temp_data": temp_data,
                 "updated_at": datetime.now().isoformat()
             }
-            response = self.supabase.table("conversation_states").upsert(state_data).execute()
+            print(f"💾 [DB] upsert 시도 - user_id: {user_id}, current_step: {current_step}, temp_data keys: {list(temp_data.keys())}")
+            response = self.supabase.table("conversation_states").upsert(
+                state_data,
+                on_conflict="kakao_user_id"
+            ).execute()
+            print(f"✅ [DB] upsert 성공 - response: {response.data}")
             return response.data[0] if response.data else None
         except Exception as e:
-            print(f"대화 상태 생성/업데이트 오류: {e}")
+            print(f"❌ [DB] 대화 상태 생성/업데이트 오류: {e}")
+            import traceback
+            traceback.print_exc()
             raise e
 
     async def update_conversation_state(self, user_id: str, current_step: str, temp_data: Dict[str, Any]) -> Dict[str, Any]:

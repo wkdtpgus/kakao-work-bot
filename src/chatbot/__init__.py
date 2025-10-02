@@ -3,8 +3,7 @@
 LangGraph 기반 AI Agent 시스템
 """
 
-from .workflow import handle_onboarding_conversation
 from .graph_manager import ChatBotManager
 
-__all__ = ['handle_onboarding_conversation', 'ChatBotManager']
-__version__ = "1.0.0"
+__all__ = ['ChatBotManager']
+__version__ = "2.0.0"

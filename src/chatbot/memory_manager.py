@@ -102,16 +102,13 @@ class MemoryManager:
         total_messages: int
     ) -> Dict[str, Any]:
         """요약 생성/업데이트 (LLM 직접 호출)"""
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage, SystemMessage
+        from ..utils.models import SUMMARY_MODEL_CONFIG
+        from langchain_openai import ChatOpenAI
 
         try:
-            # LLM 초기화 (요약용 - 저렴한 모델)
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.3,
-                api_key=os.getenv("OPENAI_API_KEY")
-            )
+            # 요약용 LLM 생성 (API 키 포함)
+            llm = ChatOpenAI(**SUMMARY_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
             # 1️⃣ 요약할 범위 결정 (최근 N개 제외)
             summarize_until = total_messages - self.recent_message_threshold

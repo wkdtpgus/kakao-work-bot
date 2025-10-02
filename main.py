@@ -133,20 +133,9 @@ async def handle_webhook_request(user_request: dict, action: dict):
     state = await db.get_conversation_state(user_id)
     print(f"🔍 현재 대화 상태: {state.get('current_step') if state else '없음'}")
 
-    # 테스트용 사용자는 바로 AI 대화 모드로 진입
+    # 테스트용 사용자는 LangGraph 워크플로우로 처리
     if "test_user" in user_id:
-        print("🧪 테스트용 사용자 감지 - AI 대화 모드로 직접 진입")
-
-        # 기존 상태 삭제하고 새로 시작
-        if state:
-            await db.delete_conversation_state(user_id)
-
-        # ai_conversation 단계로 직접 시작
-        await db.upsert_conversation_state(user_id, "ai_conversation", {
-            "conversation_history": [],
-            "current_topic": "3분커리어"
-        })
-
+        print("🧪 테스트용 사용자 감지 - LangGraph 워크플로우로 처리")
         response = await chatbot_manager.handle_conversation(user_id, user_message)
         return response
 

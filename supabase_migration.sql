@@ -64,6 +64,31 @@ COMMENT ON COLUMN conversation_summaries.summarized_until IS '몇 번째 메시�
 
 -- ============================================
 
+-- 3️⃣ conversation_states 테이블 (대화 상태 및 임시 데이터)
+CREATE TABLE IF NOT EXISTS conversation_states (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    kakao_user_id TEXT NOT NULL UNIQUE,
+    current_step TEXT,
+    temp_data JSONB DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- users 테이블과 연결
+    CONSTRAINT fk_state_user
+        FOREIGN KEY (kakao_user_id)
+        REFERENCES users(kakao_user_id)
+        ON DELETE CASCADE
+);
+
+-- 인덱스: 사용자별 상태 조회
+CREATE INDEX IF NOT EXISTS idx_conversation_states_user
+ON conversation_states(kakao_user_id);
+
+COMMENT ON TABLE conversation_states IS '대화 상태 및 임시 데이터 (온보딩 진행 상태, field_attempts 등)';
+COMMENT ON COLUMN conversation_states.current_step IS '현재 대화 단계 (onboarding, ai_intro, ai_conversation 등)';
+COMMENT ON COLUMN conversation_states.temp_data IS '임시 데이터 (field_attempts, field_status 등 JSON)';
+
+-- ============================================
+
 -- 4️⃣ Row Level Security (RLS) 설정 (선택적)
 -- Supabase에서 보안 강화를 원한다면 활성화
 
