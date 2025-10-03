@@ -92,7 +92,8 @@ async def chat(request: ChatRequest):
 async def get_user(user_id: str):
     """사용자 정보 조회"""
     try:
-        user = await db.get_user(user_id)
+        # ✅ 비즈니스 로직 레이어를 거쳐서 호출
+        user = await chatbot_manager.get_user_info(user_id)
         return user
     except Exception as e:
         print(f"사용자 정보 조회 오류: {e}")

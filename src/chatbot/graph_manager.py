@@ -149,22 +149,15 @@ class ChatBotManager:
         await self.graph_manager.init_all_graphs()
         logger.info("ChatBotManager 초기화 완료")
 
+    async def get_user_info(self, user_id: str) -> Dict:
+        """사용자 정보 조회 (API 레이어 분리)"""
+        return await self.db.get_user(user_id)
+
     async def handle_conversation(self, user_id: str, message: str) -> Dict:
         """대화 처리 - 워크플로우 진입점"""
         try:
-
-            # 메모리 매니저 초기화
-            memory_manager = MemoryManager()
-
-            # 온보딩용 LLM
-            chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
-            onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
-
-            # 서비스용 LLM
-            service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
-
-            # 워크플로우 그래프 생성
-            graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
+            # ✅ 캐싱된 그래프 가져오기 (없으면 생성)
+            graph = self.graph_manager.get_or_create_user_graph(user_id, graph_type="main")
 
             # 초기 상태 구성
             initial_state = OverallState(

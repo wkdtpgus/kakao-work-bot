@@ -9,6 +9,13 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 import os
 from ..utils.models import CHAT_MODEL_CONFIG
+from ..prompt.tools_prompt import (
+    QUALITY_QUESTION_SYSTEM_PROMPT,
+    QUALITY_QUESTION_USER_PROMPT,
+    WEEKLY_FEEDBACK_SYSTEM_PROMPT,
+    WEEKLY_FEEDBACK_USER_PROMPT,
+    TEMPLATES
+)
 
 
 # =============================================================================
@@ -54,21 +61,13 @@ class QualityQuestionTool(BaseTool):
         """질문 생성 실행"""
         llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-        prompt = f"""사용자 컨텍스트:
-{user_context}
-
-주제: {topic or '일일 업무 기록'}
-
-위 사용자의 직무와 목표에 맞는 깊이 있는 성찰 질문 3-5개를 생성해주세요.
-질문은 사용자가 자신의 업무 경험을 더 깊이 탐구하고, 배움과 성장을 발견할 수 있도록 도와야 합니다.
-
-출력 형식:
-1. [질문]
-2. [질문]
-..."""
+        prompt = QUALITY_QUESTION_USER_PROMPT.format(
+            user_context=user_context,
+            topic=topic or '일일 업무 기록'
+        )
 
         response = llm.invoke([
-            SystemMessage(content="당신은 커리어 코칭 전문가입니다. 사용자의 성장을 돕는 통찰력 있는 질문을 생성합니다."),
+            SystemMessage(content=QUALITY_QUESTION_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ])
 
@@ -78,21 +77,13 @@ class QualityQuestionTool(BaseTool):
         """비동기 실행"""
         llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-        prompt = f"""사용자 컨텍스트:
-{user_context}
-
-주제: {topic or '일일 업무 기록'}
-
-위 사용자의 직무와 목표에 맞는 깊이 있는 성찰 질문 3-5개를 생성해주세요.
-질문은 사용자가 자신의 업무 경험을 더 깊이 탐구하고, 배움과 성장을 발견할 수 있도록 도와야 합니다.
-
-출력 형식:
-1. [질문]
-2. [질문]
-..."""
+        prompt = QUALITY_QUESTION_USER_PROMPT.format(
+            user_context=user_context,
+            topic=topic or '일일 업무 기록'
+        )
 
         response = await llm.ainvoke([
-            SystemMessage(content="당신은 커리어 코칭 전문가입니다. 사용자의 성장을 돕는 통찰력 있는 질문을 생성합니다."),
+            SystemMessage(content=QUALITY_QUESTION_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ])
 
@@ -116,21 +107,13 @@ class WeeklyFeedbackTool(BaseTool):
         """피드백 생성 실행"""
         llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-        prompt = f"""사용자 정보:
-{user_metadata}
-
-주간 기록:
-{weekly_records}
-
-위 주간 기록을 분석하여 다음 내용을 포함한 피드백을 생성해주세요:
-1. 이번 주 하이라이트 (주요 성과 3가지)
-2. 발견된 패턴 (업무 패턴, 성장 포인트)
-3. 다음 주 제안 (개선 방향, 실행 가능한 조언)
-
-출력은 친근하고 격려하는 톤으로 작성해주세요."""
+        prompt = WEEKLY_FEEDBACK_USER_PROMPT.format(
+            user_metadata=user_metadata,
+            weekly_records=weekly_records
+        )
 
         response = llm.invoke([
-            SystemMessage(content="당신은 경력 개발 코치입니다. 사용자의 주간 기록을 분석하여 통찰력 있는 피드백을 제공합니다."),
+            SystemMessage(content=WEEKLY_FEEDBACK_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ])
 
@@ -140,21 +123,13 @@ class WeeklyFeedbackTool(BaseTool):
         """비동기 실행"""
         llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-        prompt = f"""사용자 정보:
-{user_metadata}
-
-주간 기록:
-{weekly_records}
-
-위 주간 기록을 분석하여 다음 내용을 포함한 피드백을 생성해주세요:
-1. 이번 주 하이라이트 (주요 성과 3가지)
-2. 발견된 패턴 (업무 패턴, 성장 포인트)
-3. 다음 주 제안 (개선 방향, 실행 가능한 조언)
-
-출력은 친근하고 격려하는 톤으로 작성해주세요."""
+        prompt = WEEKLY_FEEDBACK_USER_PROMPT.format(
+            user_metadata=user_metadata,
+            weekly_records=weekly_records
+        )
 
         response = await llm.ainvoke([
-            SystemMessage(content="당신은 경력 개발 코치입니다. 사용자의 주간 기록을 분석하여 통찰력 있는 피드백을 제공합니다."),
+            SystemMessage(content=WEEKLY_FEEDBACK_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ])
 
@@ -177,52 +152,7 @@ class TemplateTool(BaseTool):
     def _run(self, template_type: str, user_context: str) -> str:
         """템플릿 생성 실행"""
         # TODO: LLM을 사용한 실제 템플릿 생성 로직
-
-        templates = {
-            "일일기록": """
-📝 일일 기록 템플릿
-
-날짜: [YYYY-MM-DD]
-
-오늘의 주요 업무:
-•
-
-어려웠던 점 / 도전:
-•
-
-배운 점 / 인사이트:
-•
-
-내일 계획:
-•
-""",
-            "회고": """
-🔍 회고 템플릿
-
-기간: [시작일 ~ 종료일]
-
-잘한 점 (Keep):
-•
-
-개선할 점 (Problem):
-•
-
-시도해볼 점 (Try):
-•
-""",
-            "이력서": """
-📄 경력 기술서 템플릿
-
-[프로젝트명]
-• 기간:
-• 역할:
-• 사용 기술:
-• 주요 성과:
-• 배운 점:
-"""
-        }
-
-        return templates.get(template_type, "해당 템플릿을 찾을 수 없습니다.").strip()
+        return TEMPLATES.get(template_type, "해당 템플릿을 찾을 수 없습니다.").strip()
 
     async def _arun(self, template_type: str, user_context: str) -> str:
         """비동기 실행"""

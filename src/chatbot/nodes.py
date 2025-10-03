@@ -1,7 +1,3 @@
-"""
-LangGraph 워크플로우 노드들
-"""
-
 from .state import OverallState, UserContext, UserMetadata, OnboardingStage, OnboardingResponse, UserIntent
 from ..utils.utils import get_system_prompt, format_user_prompt
 import logging
@@ -43,9 +39,12 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             k: user.get(k) for k in DATA_FIELDS
         })
 
-        # 🆕 conversation_states에서 field_attempts/field_status 복원
+        # 🆕 conversation_states에서 field_attempts/field_status/question_turn 복원
         conv_state = await db.get_conversation_state(user_id)
         print(f"🔍 [RouterNode] conv_state: {conv_state}")
+
+        question_turn = 0
+        daily_session_data = {}
 
         if conv_state and conv_state.get("temp_data"):
             temp_data = conv_state["temp_data"]
@@ -57,6 +56,14 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             if "field_status" in temp_data:
                 metadata.field_status = temp_data["field_status"]
                 print(f"✅ [RouterNode] field_status 복원: {metadata.field_status}")
+
+            # 🆕 question_turn과 daily_session_data 복원
+            if "question_turn" in temp_data:
+                question_turn = temp_data["question_turn"]
+                print(f"✅ [RouterNode] question_turn 복원: {question_turn}")
+            if "daily_session_data" in temp_data:
+                daily_session_data = temp_data["daily_session_data"]
+                print(f"✅ [RouterNode] daily_session_data 복원: {daily_session_data}")
         else:
             print(f"⚠️ [RouterNode] temp_data 없음")
 
@@ -90,7 +97,9 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             onboarding_stage=OnboardingStage.COMPLETED if is_complete else OnboardingStage.COLLECTING_BASIC,
             metadata=metadata,
             daily_record_count=user.get("daily_record_count", 0),
-            last_record_date=user.get("last_record_date")
+            last_record_date=user.get("last_record_date"),
+            question_turn=question_turn,
+            daily_session_data=daily_session_data
         )
 
         if is_complete:
@@ -247,7 +256,8 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
                 if response.is_clarification_request:
                     print(f"💬 [OnboardingAgent] 명확화 요청 감지 - 시도 횟수 유지 (field: {current_target_field})")
                 else:
-                    current_attempts = updated_metadata.field_attempts.get(current_target_field, 0)
+                    # ✅ 원본 current_metadata에서 현재 시도 횟수 가져오기 (updated_metadata는 복사본이라 0으로 초기화됨)
+                    current_attempts = current_metadata.field_attempts.get(current_target_field, 0)
                     updated_metadata.field_attempts[current_target_field] = current_attempts + 1
                     print(f"📊 [OnboardingAgent] {current_target_field} 시도 횟수: {current_attempts} → {current_attempts + 1}")
 
@@ -353,30 +363,91 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 # =============================================================================
 
 async def daily_agent_node(state: OverallState, db, memory_manager, agent_executor) -> Command[Literal["__end__"]]:
-    """일일 기록 대화 + DB 저장"""
+    """일일 기록 대화 + 3턴 질문 플로우 + DB 저장"""
     from ..prompt.qa_agent import DAILY_AGENT_SYSTEM_PROMPT
+    from ..prompt.tools_prompt import DAILY_SUMMARY_SYSTEM_PROMPT, DAILY_SUMMARY_USER_PROMPT
+    from langchain_openai import ChatOpenAI
+    from ..utils.models import CHAT_MODEL_CONFIG
+    import os
 
     user_id = state["user_id"]
     message = state["message"]
     user_context = state["user_context"]
 
-    logger.info(f"[DailyAgent] user_id={user_id}")
+    logger.info(f"[DailyAgent] user_id={user_id}, current_turn={user_context.question_turn}")
 
     try:
         # 대화 히스토리 로드
         conversation_context = await memory_manager.get_contextualized_history(user_id, db)
 
-        # 오늘 날짜의 일일 기록 횟수 계산 (온보딩 제외)
+        # 오늘 날짜의 일일 기록 횟수 계산
         today = datetime.now().strftime("%Y-%m-%d")
-
-        # conversations 테이블에서 오늘 날짜의 user 메시지만 카운트
-        # (온보딩 완료 후의 메시지만 카운트하려면 onboarding_stage가 COMPLETED인 시점 이후)
         today_count = 0
         for turn in conversation_context["recent_turns"]:
             if turn["role"] == "user" and turn.get("created_at", "").startswith(today):
                 today_count += 1
 
-        # 시스템 프롬프트 구성
+        # 🆕 질문 턴 추적
+        current_turn = user_context.question_turn
+
+        # 🆕 3턴 완료 후 요약 생성
+        if current_turn >= 3:
+            logger.info(f"[DailyAgent] 3턴 완료, 요약 생성 시작")
+
+            # 오늘의 대화 내용 수집 (최근 6개 메시지 = 3턴)
+            recent_conversation = conversation_context["recent_turns"][-6:]
+            conversation_text = "\n".join([
+                f"{'사용자' if turn['role'] == 'user' else '봇'}: {turn['content']}"
+                for turn in recent_conversation
+            ])
+
+            # 요약 생성
+            metadata = user_context.metadata
+            user_metadata_text = f"""
+- 이름: {metadata.name}
+- 직무: {metadata.job_title}
+- 프로젝트: {metadata.project_name}
+- 커리어 목표: {metadata.career_goal}
+"""
+
+            summary_prompt = DAILY_SUMMARY_USER_PROMPT.format(
+                user_metadata=user_metadata_text,
+                conversation_turns=conversation_text
+            )
+
+            llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            summary_response = await llm.ainvoke([
+                SystemMessage(content=DAILY_SUMMARY_SYSTEM_PROMPT),
+                HumanMessage(content=summary_prompt)
+            ])
+
+            ai_response = summary_response.content
+
+            # 턴 카운터 리셋
+            user_context.question_turn = 0
+            user_context.daily_session_data = {}
+
+            # 대화 저장
+            await memory_manager.add_messages(user_id, message, ai_response, db)
+
+            # 🆕 리셋된 턴 상태를 DB에 저장
+            existing_state = await db.get_conversation_state(user_id)
+            existing_temp_data = existing_state.get("temp_data", {}) if existing_state else {}
+
+            existing_temp_data["question_turn"] = 0
+            existing_temp_data["daily_session_data"] = {}
+
+            await db.upsert_conversation_state(
+                user_id,
+                current_step="daily_summary_completed",
+                temp_data=existing_temp_data
+            )
+
+            logger.info(f"[DailyAgent] 요약 생성 완료, 턴 리셋, DB 저장 완료")
+
+            return Command(update={"ai_response": ai_response, "user_context": user_context}, goto="__end__")
+
+        # 🆕 일반 질문 플로우 (0-2턴)
         metadata = user_context.metadata
         system_prompt = DAILY_AGENT_SYSTEM_PROMPT.format(
             name=metadata.name or "없음",
@@ -386,6 +457,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager, agent_execut
             career_goal=metadata.career_goal or "없음",
             project_name=metadata.project_name or "없음",
             recent_work=metadata.recent_work or "없음",
+            question_turn=current_turn,
             today_record_count=today_count
         )
 
@@ -404,12 +476,28 @@ async def daily_agent_node(state: OverallState, db, memory_manager, agent_execut
         result = await agent_executor.ainvoke({"messages": messages})
         ai_response = result["messages"][-1].content
 
+        # 🆕 턴 증가
+        user_context.question_turn += 1
+
         # 대화 저장
         await memory_manager.add_messages(user_id, message, ai_response, db)
 
-        logger.info(f"[DailyAgent] 응답: {ai_response[:50]}..., today_count={today_count}")
+        # 🆕 턴 상태를 DB에 저장
+        existing_state = await db.get_conversation_state(user_id)
+        existing_temp_data = existing_state.get("temp_data", {}) if existing_state else {}
 
-        return Command(update={"ai_response": ai_response}, goto="__end__")
+        existing_temp_data["question_turn"] = user_context.question_turn
+        existing_temp_data["daily_session_data"] = user_context.daily_session_data or {}
+
+        await db.upsert_conversation_state(
+            user_id,
+            current_step="daily_recording",
+            temp_data=existing_temp_data
+        )
+
+        logger.info(f"[DailyAgent] 응답 완료, turn: {current_turn} → {user_context.question_turn}, DB 저장 완료")
+
+        return Command(update={"ai_response": ai_response, "user_context": user_context}, goto="__end__")
 
     except Exception as e:
         logger.error(f"[DailyAgent] Error: {e}")
@@ -428,7 +516,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager, agent_execut
 
 async def weekly_agent_node(state: OverallState, db, memory_manager, agent_executor) -> Command[Literal["__end__"]]:
     """주간 피드백 생성"""
-    from ..prompt.qa_agent import UNIFIED_AGENT_SYSTEM_PROMPT
+    from ..prompt.weekly_agent import WEEKLY_AGENT_SYSTEM_PROMPT
 
     user_id = state["user_id"]
     message = state["message"]
@@ -443,22 +531,12 @@ async def weekly_agent_node(state: OverallState, db, memory_manager, agent_execu
 
         # 시스템 프롬프트 구성
         metadata = user_context.metadata
-        system_prompt = f"""당신은 주간 피드백을 제공하는 커리어 코치입니다.
-
-사용자 정보:
-- 이름: {metadata.name}
-- 직무: {metadata.job_title}
-- 목표: {metadata.career_goal}
-
-최근 대화 요약:
-{conversation_context["summary"]}
-
-사용자의 주간 활동을 분석하여 다음을 포함한 피드백을 한국어로 제공하세요:
-1. 이번 주 하이라이트 (주요 성과 3가지)
-2. 발견된 패턴 (업무 패턴, 성장 포인트)
-3. 다음 주 제안 (개선 방향, 실행 가능한 조언)
-
-격려하고 긍정적인 톤으로 작성해주세요."""
+        system_prompt = WEEKLY_AGENT_SYSTEM_PROMPT.format(
+            name=metadata.name or "없음",
+            job_title=metadata.job_title or "없음",
+            career_goal=metadata.career_goal or "없음",
+            summary=conversation_context["summary"]
+        )
 
         # 메시지 구성
         messages = [

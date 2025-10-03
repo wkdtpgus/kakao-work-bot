@@ -69,6 +69,8 @@ class UserContext(BaseModel):
     metadata: Optional[UserMetadata] = None
     daily_record_count: int = 0  # 일일 기록 횟수
     last_record_date: Optional[str] = None
+    question_turn: int = 0  # 현재 질문 턴 (0-3)
+    daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (질문/답변 누적)
 
 
 class UserIntent(str, Enum):
