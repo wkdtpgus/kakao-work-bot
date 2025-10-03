@@ -153,7 +153,7 @@ class ChatBotManager:
         """사용자 정보 조회 (API 레이어 분리)"""
         return await self.db.get_user(user_id)
 
-    async def handle_conversation(self, user_id: str, message: str) -> Dict:
+    async def handle_conversation(self, user_id: str, message: str, action_hint: str = None) -> Dict:
         """대화 처리 - 워크플로우 진입점"""
         try:
             # ✅ 캐싱된 그래프 가져오기 (없으면 생성)
@@ -167,7 +167,8 @@ class ChatBotManager:
                 user_intent=None,   # service_router에서 결정
                 ai_response="",
                 conversation_history=[],
-                conversation_summary=""
+                conversation_summary="",
+                action_hint=action_hint  # 카카오톡 버튼 힌트
             )
 
             # 워크플로우 실행

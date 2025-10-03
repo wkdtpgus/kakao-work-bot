@@ -53,9 +53,11 @@ def _format_history(history: List[Dict]) -> str:
         return "이전 대화가 없습니다."
 
     formatted = []
-    for msg in history:  # 전체 히스토리 표시
+    # 최근 10개만 표시 (성능 최적화)
+    recent_history = history[-10:] if len(history) > 10 else history
+    for msg in recent_history:
         role = "사용자" if msg["role"] == "user" else "봇"
-        content = msg["content"][:300] + "..." if len(msg["content"]) > 300 else msg["content"]
+        content = msg["content"][:200] + "..." if len(msg["content"]) > 200 else msg["content"]
         formatted.append(f"{role}: {content}")
 
     return "\n".join(formatted)

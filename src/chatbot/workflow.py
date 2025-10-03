@@ -2,14 +2,10 @@
 LangGraph 멀티 스텝 워크플로우
 """
 
-from typing import Dict, Any
 from functools import partial
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import create_react_agent
+from langgraph.graph import StateGraph
 from .state import OverallState
-from .memory_manager import MemoryManager
 from . import nodes
-from .tools import get_qa_tools
 
 
 def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> StateGraph:
@@ -26,11 +22,7 @@ def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> Sta
     # StateGraph 생성
     workflow = StateGraph(OverallState)
 
-    # AgentExecutor 생성 (일일/주간 agent용)
-    tools = get_qa_tools()
-    agent_executor = create_react_agent(service_llm, tools)
-
-    # 노드 추가
+    # 노드 추가 (Agent Executor 제거, 단순 LLM 호출만 사용)
     workflow.add_node("router_node",
                      partial(nodes.router_node, db=db))
 
@@ -41,10 +33,10 @@ def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> Sta
                      partial(nodes.onboarding_agent_node, db=db, memory_manager=memory_manager, llm=onboarding_llm))
 
     workflow.add_node("daily_agent_node",
-                     partial(nodes.daily_agent_node, db=db, memory_manager=memory_manager, agent_executor=agent_executor))
+                     partial(nodes.daily_agent_node, db=db, memory_manager=memory_manager))
 
     workflow.add_node("weekly_agent_node",
-                     partial(nodes.weekly_agent_node, db=db, memory_manager=memory_manager, agent_executor=agent_executor))
+                     partial(nodes.weekly_agent_node, db=db, memory_manager=memory_manager))
 
     # 시작점 설정
     workflow.set_entry_point("router_node")

@@ -123,57 +123,59 @@ async def webhook(request: dict):
         }
 
 async def handle_webhook_request(user_request: dict, action: dict):
-    """웹훅 요청 처리"""
+    """웹훅 요청 처리 - Action 기반 분기"""
     user_id = user_request["user"]["id"]
     user_message = user_request["utterance"]
+    action_name = action.get("name", "fallback")
 
-    print(f"Action: {action['name']}")
-    print(f"User message: {user_message}")
+    print(f"🎯 Action: {action_name}")
+    print(f"💬 User message: {user_message}")
 
-    # 현재 대화 상태 확인
-    state = await db.get_conversation_state(user_id)
-    print(f"🔍 현재 대화 상태: {state.get('current_step') if state else '없음'}")
-
-    # 테스트용 사용자는 LangGraph 워크플로우로 처리
+    # ========================================
+    # 1. 테스트용 사용자 (개발/디버깅용)
+    # ========================================
     if "test_user" in user_id:
-        print("🧪 테스트용 사용자 감지 - LangGraph 워크플로우로 처리")
+        print("🧪 [Test User] LangGraph 워크플로우 처리")
         response = await chatbot_manager.handle_conversation(user_id, user_message)
         return response
 
-    # "3분 커리어" 키워드 처리
-    if user_message == "오늘의 3분 커리어 시작!" or "3분 커리어" in user_message:
-        print("🚀 3분 커리어 키워드 감지 - 우선 처리")
-
-        if state:
-            await db.delete_conversation_state(user_id)
-
-        await db.upsert_conversation_state(user_id, "ai_intro", {})
-        response = await chatbot_manager.handle_conversation(user_id, user_message)
+    # ========================================
+    # 2. Action 기반 명확한 분기 (버튼 클릭)
+    # ========================================
+    if action_name == "온보딩":
+        print("🔘 [Button] 온보딩 버튼 클릭")
+        response = await chatbot_manager.handle_conversation(
+            user_id,
+            user_message,
+            action_hint="onboarding"
+        )
         return response
 
-    # 진행 중인 대화 상태에 따른 처리
-    if state and state.get("current_step"):
-        if state["current_step"] in ["onboarding_start", "name_input", "job_input",
-                                   "total_years", "job_years", "career_goal",
-                                   "project_name", "recent_work", "job_meaning", "important_thing"]:
-            return await handle_onboarding(user_id, user_message)
-        elif state["current_step"] == "ai_intro":
-            return await chatbot_manager.handle_conversation(user_id, user_message)
-        elif state["current_step"] == "ai_conversation":
-            return await chatbot_manager.handle_conversation(user_id, user_message)
-        else:
-            # 알 수 없는 상태 - 초기화
-            await db.delete_conversation_state(user_id)
-            return await handle_welcome(user_id)
-    else:
-        # 새로운 대화 시작
-        if user_message in ["온보딩 시작", "온보딩"]:
-            return await handle_onboarding(user_id, user_message)
-        elif user_message in ["오늘의 3분 커리어 시작!"] or "3분 커리어" in user_message:
-            await db.upsert_conversation_state(user_id, "ai_intro", {})
-            return await chatbot_manager.handle_conversation(user_id, user_message)
-        else:
-            return await handle_welcome(user_id)
+    elif action_name in ["일일기록", "오늘의 일일기록 시작"]:
+        print("🔘 [Button] 일일기록 버튼 클릭")
+        response = await chatbot_manager.handle_conversation(
+            user_id,
+            user_message,
+            action_hint="daily_record"
+        )
+        return response
+
+    elif action_name == "서비스피드백":
+        print("🔘 [Button] 서비스피드백 버튼 클릭")
+        response = await chatbot_manager.handle_conversation(
+            user_id,
+            user_message,
+            action_hint="service_feedback"
+        )
+        return response
+
+    # ========================================
+    # 3. 자연어 처리 (fallback)
+    # ========================================
+    # router_node가 DB 기반으로 자동 판단
+    print("🤖 [자연어] LangGraph 워크플로우로 자동 라우팅")
+    response = await chatbot_manager.handle_conversation(user_id, user_message)
+    return response
 
 async def handle_welcome(user_id: str):
     """환영 메시지 처리"""

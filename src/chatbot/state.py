@@ -89,6 +89,7 @@ class OverallState(TypedDict):
     ai_response: str
     conversation_history: List[BaseMessage]
     conversation_summary: str
+    action_hint: Optional[str]  # 카카오톡 버튼 힌트 ("onboarding", "daily_record", "service_feedback")
 
 
 @dataclass

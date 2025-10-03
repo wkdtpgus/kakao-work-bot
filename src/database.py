@@ -41,14 +41,27 @@ class Database:
             return self._mock_users[user_id]
 
         try:
-            user_data["kakao_user_id"] = user_id
-            response = self.supabase.table("users").upsert(
-                user_data,
-                on_conflict="kakao_user_id"
-            ).execute()
-            return response.data[0] if response.data else None
+            # 기존 사용자 확인
+            existing_user = await self.get_user(user_id)
+
+            if existing_user:
+                # ✅ 기존 사용자 업데이트 (update 사용)
+                print(f"🔄 [DB] 기존 사용자 업데이트: {user_id}, 필드: {list(user_data.keys())}")
+                response = self.supabase.table("users").update(
+                    user_data
+                ).eq("kakao_user_id", user_id).execute()
+                return response.data[0] if response.data else None
+            else:
+                # ✅ 신규 사용자 생성 (insert 사용)
+                print(f"✨ [DB] 신규 사용자 생성: {user_id}")
+                user_data["kakao_user_id"] = user_id
+                response = self.supabase.table("users").insert(user_data).execute()
+                return response.data[0] if response.data else None
+
         except Exception as e:
-            print(f"사용자 생성/업데이트 오류: {e}")
+            print(f"❌ [DB] 사용자 생성/업데이트 오류: {e}")
+            import traceback
+            traceback.print_exc()
             raise e
 
     async def get_conversation_state(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -195,7 +208,7 @@ class Database:
                 "kakao_user_id": user_id,
                 "conversation_history": history,
                 "updated_at": datetime.now().isoformat()
-            }).execute()
+            }, on_conflict="kakao_user_id").execute()
 
             return True
         except Exception as e:
@@ -401,3 +414,136 @@ class Database:
         except Exception as e:
             print(f"요약 삭제 오류: {e}")
             return False
+
+    # ============================================
+    # 일일기록 카운트 관리
+    # ============================================
+
+    async def increment_attendance_count(self, user_id: str) -> int:
+        """출석(일일기록) 카운트 증가 및 현재 카운트 반환"""
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_attendance_counts'):
+                self._mock_attendance_counts = {}
+            self._mock_attendance_counts[user_id] = self._mock_attendance_counts.get(user_id, 0) + 1
+            return self._mock_attendance_counts[user_id]
+
+        try:
+            # 현재 카운트 조회
+            user = await self.get_user(user_id)
+            current_count = user.get("attendance_count", 0) if user else 0
+
+            # 카운트 증가
+            new_count = current_count + 1
+
+            # DB 업데이트
+            await self.create_or_update_user(user_id, {
+                "attendance_count": new_count
+            })
+
+            print(f"✅ [DB] 출석 카운트 증가: {user_id} → {new_count}일차")
+            return new_count
+
+        except Exception as e:
+            print(f"❌ [DB] 출석 카운트 증가 실패: {e}")
+            return 0
+
+    # =============================================================================
+    # 주간 요약 관리
+    # =============================================================================
+
+    async def save_weekly_summary(
+        self,
+        user_id: str,
+        sequence_number: int,
+        start_daily_count: int,
+        end_daily_count: int,
+        summary_content: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> bool:
+        """주간 요약 저장"""
+        if not self.supabase:
+            print("⚠️ [DB] Supabase 미연결 - 주간요약 저장 스킵")
+            return False
+
+        try:
+            data = {
+                "kakao_user_id": user_id,
+                "sequence_number": sequence_number,
+                "start_daily_count": start_daily_count,
+                "end_daily_count": end_daily_count,
+                "summary_content": summary_content,
+                "start_date": start_date,
+                "end_date": end_date,
+                "created_at": datetime.now().isoformat()
+            }
+
+            self.supabase.table("weekly_summaries").upsert(
+                data,
+                on_conflict="kakao_user_id,sequence_number"
+            ).execute()
+
+            print(f"✅ [DB] 주간요약 저장 완료: {user_id} - {sequence_number}번째 ({start_daily_count}-{end_daily_count}일차)")
+            return True
+
+        except Exception as e:
+            print(f"❌ [DB] 주간요약 저장 실패: {e}")
+            return False
+
+    async def get_weekly_summaries(self, user_id: str, limit: int = 10) -> list:
+        """유저의 주간요약 목록 조회 (최신순)"""
+        if not self.supabase:
+            return []
+
+        try:
+            response = self.supabase.table("weekly_summaries")\
+                .select("*")\
+                .eq("kakao_user_id", user_id)\
+                .order("sequence_number", desc=True)\
+                .limit(limit)\
+                .execute()
+
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"❌ [DB] 주간요약 목록 조회 실패: {e}")
+            return []
+
+    async def get_weekly_summary_by_sequence(self, user_id: str, sequence_number: int) -> Optional[Dict]:
+        """특정 시퀀스의 주간요약 조회"""
+        if not self.supabase:
+            return None
+
+        try:
+            response = self.supabase.table("weekly_summaries")\
+                .select("*")\
+                .eq("kakao_user_id", user_id)\
+                .eq("sequence_number", sequence_number)\
+                .single()\
+                .execute()
+
+            return response.data if response.data else None
+
+        except Exception as e:
+            print(f"❌ [DB] 주간요약 조회 실패: {e}")
+            return None
+
+    async def get_latest_weekly_summary(self, user_id: str) -> Optional[Dict]:
+        """최신 주간요약 조회"""
+        if not self.supabase:
+            return None
+
+        try:
+            response = self.supabase.table("weekly_summaries")\
+                .select("*")\
+                .eq("kakao_user_id", user_id)\
+                .order("sequence_number", desc=True)\
+                .limit(1)\
+                .execute()
+
+            return response.data[0] if response.data else None
+
+        except Exception as e:
+            print(f"❌ [DB] 최신 주간요약 조회 실패: {e}")
+            return None
