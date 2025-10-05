@@ -14,13 +14,17 @@ Python FastAPI와 LangChain을 기반으로 한 AI 대화형 커리어 챗봇 �
 
 ### 기술 스택
 
-- **Backend**: Python 3.11+ + FastAPI
-- **AI Framework**: LangChain + LangGraph
-- **LLM**: OpenAI GPT-3.5-turbo
+- **Backend**: Python 3.12+ + FastAPI
+- **AI Framework**: LangChain + LangGraph (멀티 스텝 워크플로우)
+- **LLM**:
+  - 온보딩: gpt-4o-mini (max_tokens: 500)
+  - 일일기록/주간피드백: gpt-4o-mini (max_tokens: 800)
 - **Database**: Supabase (PostgreSQL)
-- **Package Manager**: Poetry
-- **Web Server**: Uvicorn
+- **Package Manager**: Poetry 2.2+
+- **Web Server**: Uvicorn (ASGI)
+- **Monitoring**: LangSmith (추적 및 디버깅)
 - **Messaging**: KakaoTalk Bot API
+- **Deployment**: AWS EC2 (Ubuntu 24.04)
 
 ## 🛠️ 개발 환경 설정
 
@@ -68,32 +72,36 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 # OpenAI API 설정
 OPENAI_API_KEY=your_openai_api_key
 
-# 서버 설정 (선택사항)
+# LangSmith 추적 (선택사항)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=your_langsmith_api_key
+LANGCHAIN_PROJECT=3min_career
+
+# 서버 설정
 PORT=8000
 ```
 
 ### 5. 서버 실행
 
 ```bash
-# Poetry 환경에서 실행
+# Poetry 환경에서 실행 (권장)
 poetry run python main.py
-
-# 또는 Poetry shell 활성화 후 실행
-poetry shell
-python main.py
 
 # 직접 uvicorn 사용
 poetry run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+**참고**: Poetry 2.0+부터 `poetry shell` 명령어가 기본 제공되지 않습니다. `poetry run` 사용을 권장합니다.
+
 서버가 성공적으로 시작되면 다음과 같은 메시지가 표시됩니다:
 
 ```
 ✅ Supabase 클라이언트 초기화 성공
-✅ 시스템 프롬프트 로드 성공
-✅ 유저 프롬프트 템플릿 로드 성공
-✅ SimpleChatBot 초기화 완료
-INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Started server process [PID]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
 ### 6. 웹 인터페이스 접속
@@ -107,23 +115,38 @@ kakao-work-bot/
 ├── main.py                 # FastAPI 메인 애플리케이션
 ├── pyproject.toml         # Poetry 프로젝트 설정
 ├── poetry.lock           # Poetry 의존성 잠금 파일
-├── prompt.text           # AI 프롬프트 설정
 ├── .env                  # 환경 변수 (git에서 제외)
 ├── .env.example          # 환경 변수 예시 파일
 ├── README.md            # 프로젝트 문서
-├── src/                 # 소스 코드
-│   ├── chatbot/         # 챗봇 관련 모듈
+├── src/
+│   ├── chatbot/              # 챗봇 핵심 모듈
 │   │   ├── __init__.py
-│   │   ├── simple_chatbot.py    # 메인 챗봇 클래스
-│   │   ├── memory_manager.py    # 대화 메모리 관리
-│   │   ├── utils.py            # 유틸리티 함수들
-│   │   └── state.py            # 대화 상태 관리
-│   └── database.py      # 데이터베이스 연결 및 쿼리
-├── public/              # 정적 웹 파일
-│   ├── index.html       # 테스트 웹 페이지
-│   ├── style.css        # 스타일시트
-│   └── script.js        # 클라이언트 스크립트
-└── archive/             # 아카이브 파일들
+│   │   ├── graph_manager.py  # LangGraph 워크플로우 관리
+│   │   ├── workflow.py       # 멀티 스텝 워크플로우 정의
+│   │   ├── nodes.py          # 노드 함수들 (router, onboarding, daily, weekly)
+│   │   ├── state.py          # 상태 정의 (Pydantic 모델)
+│   │   └── memory_manager.py # 대화 메모리 관리
+│   ├── service/              # 서비스 레이어
+│   │   ├── intent_classifier.py       # 사용자 의도 분류
+│   │   ├── summary_generator.py       # 일일 요약 생성
+│   │   └── weekly_feedback_generator.py # 주간 피드백 생성
+│   ├── prompt/               # AI 프롬프트 모음
+│   │   ├── onboarding.py     # 온보딩 프롬프트
+│   │   ├── daily_record_prompt.py    # 일일기록 프롬프트
+│   │   ├── daily_summary_prompt.py   # 일일요약 프롬프트
+│   │   ├── weekly_summary_prompt.py  # 주간요약 프롬프트
+│   │   └── intent_classifier.py      # 의도 분류 프롬프트
+│   ├── config/              # 설정 파일
+│   │   └── config.py        # 모델 설정 (max_tokens, timeout 등)
+│   ├── utils/               # 유틸리티
+│   │   ├── utils.py         # 헬퍼 함수들
+│   │   └── models.py        # LLM 설정
+│   └── database.py          # Supabase 데이터베이스 연결
+├── public/                  # 정적 웹 파일
+│   ├── index.html          # 테스트 웹 페이지
+│   ├── style.css           # 스타일시트
+│   └── script.js           # 클라이언트 스크립트
+└── supabase_migration.sql  # DB 마이그레이션 스크립트
 ```
 
 ## 🗄️ 데이터베이스 구조
@@ -185,38 +208,52 @@ CREATE TABLE conversation_history (
 
 ## 🔧 핵심 컴포넌트
 
-### 1. SimpleChatBot (`src/chatbot/simple_chatbot.py`)
+### 1. GraphManager (`src/chatbot/graph_manager.py`)
 
-메인 챗봇 클래스로 다음 기능을 담당합니다:
+LangGraph 워크플로우 관리자:
 
-- LangChain 기반 대화 처리
-- OpenAI GPT API 호출
-- 대화 히스토리 관리
-- 응답 캐싱 및 최적화
+- 유저별 그래프 인스턴스 관리
+- LLM 설정 (온보딩/서비스 분리)
+- 대화 처리 진입점 (handle_conversation)
 
-### 2. MemoryManager (`src/chatbot/memory_manager.py`)
+### 2. Workflow (`src/chatbot/workflow.py`)
 
-대화 메모리 관리를 담당합니다:
+멀티 스텝 워크플로우 정의:
 
-- 대화 히스토리 저장/조회
-- 응답 캐싱
-- 메모리 최적화
+```
+START → router_node
+  ├─ onboarding_agent_node → END
+  └─ service_router_node
+      ├─ daily_agent_node → END
+      └─ weekly_agent_node → END
+```
 
-### 3. Database (`src/database.py`)
+### 3. Nodes (`src/chatbot/nodes.py`)
 
-Supabase 데이터베이스 연동을 담당합니다:
+각 워크플로우 노드:
 
-- 사용자 정보 관리
-- 대화 기록 저장
-- 온보딩 상태 관리
+- **router_node**: 온보딩 완료 여부 체크
+- **onboarding_agent_node**: 9개 필드 수집 (이름, 직무, 연차 등)
+- **service_router_node**: 사용자 의도 분류 (일일기록/주간피드백)
+- **daily_agent_node**: 일일 업무 대화 및 요약
+- **weekly_agent_node**: 주간 피드백 생성
 
-### 4. PromptLoader (`src/chatbot/utils.py`)
+### 4. MemoryManager (`src/chatbot/memory_manager.py`)
 
-AI 프롬프트 관리를 담당합니다:
+대화 메모리 관리:
 
-- 프롬프트 파일 로드
-- 동적 프롬프트 구성
-- 폴백 프롬프트 제공
+- 대화 히스토리 저장/조회 (Supabase)
+- 요약 생성 (긴 대화 압축)
+- 최근 10개 메시지 유지
+
+### 5. Database (`src/database.py`)
+
+Supabase 연동:
+
+- 사용자 프로필 관리
+- 대화 히스토리 저장
+- 출석 카운트 관리
+- 일일 요약 저장
 
 ## 🚀 API 엔드포인트
 
@@ -229,34 +266,57 @@ AI 프롬프트 관리를 담당합니다:
 ### API 엔드포인트
 
 - `GET /api/status` - 서버 상태 확인
-- `POST /webhook` - 카카오톡 웹훅 (구현 예정)
-- `POST /api/chat` - 직접 채팅 API (구현 예정)
+- `POST /webhook` - 카카오톡 웹훅 (메인 진입점)
+- `POST /api/chat` - 웹 테스트용 채팅 API
+- `GET /api/user/{user_id}` - 사용자 정보 조회
 
 ## 🎯 AI 시스템 특징
 
 ### 프롬프트 시스템
 
-`prompt.text` 파일에서 AI의 성격과 응답 패턴을 정의합니다:
+각 노드별로 최적화된 프롬프트를 사용합니다:
 
-- **역할**: 3분커리어 AI 에이전트
-- **응답 구조**: 공감 → 질문 → 정리
-- **언어**: 한국어 자연스러운 대화 스타일
-- **목표**: 커리어 발전 도움
+- **온보딩 프롬프트** (`src/prompt/onboarding.py`):
+  - 9개 필드 수집 (이름, 직무, 연차, 목표 등)
+  - 간소화된 구조 (57줄, 토큰 효율)
+  - 첫 사용자 환영 메시지
+
+- **일일 기록 프롬프트** (`src/prompt/daily_record_prompt.py`):
+  - 업무 경험 대화형 수집
+  - 공감 + 경청 스타일
+
+- **요약 프롬프트** (`src/prompt/daily_summary_prompt.py`):
+  - 일일 대화 요약 생성
+  - 핵심 내용 추출
+
+- **주간 피드백 프롬프트** (`src/prompt/weekly_summary_prompt.py`):
+  - 일주일 활동 분석
+  - 성장 포인트 및 제안 제공
 
 ### 성능 최적화
 
-1. **토큰 절약**:
-   - 대화 히스토리 제한 (최근 6개 메시지)
-   - 메시지 길이 제한 (300자)
-   - max_tokens 설정 (300)
+1. **프롬프트 최적화** (2025-01 적용):
+   - 온보딩 프롬프트 70% 간소화 (191줄 → 57줄)
+   - 토큰 수 대폭 감소: 3,295 → 약 1,200 토큰
 
-2. **응답 캐싱**:
-   - 동일한 질문에 대한 중복 API 호출 방지
-   - 메모리 기반 캐싱 시스템
+2. **토큰 제한**:
+   - 온보딩 Agent: max_tokens=500 (응답 간결화)
+   - 일일/주간 Agent: max_tokens=800
+   - 대화 히스토리: 최근 10개 메시지만 유지
+   - 메시지 길이 제한: 300자
 
-3. **비동기 처리**:
-   - FastAPI의 async/await 활용
-   - 데이터베이스 쿼리 최적화
+3. **Timeout 설정**:
+   - LLM Timeout: 10초 (기존 30초에서 단축)
+   - 응답 시간: 평균 2-4초 (목표 3초 이하)
+
+4. **비동기 처리**:
+   - FastAPI의 async/await 전면 활용
+   - Supabase 쿼리 비동기 처리
+   - LLM 호출 비동기화
+
+5. **모니터링**:
+   - LangSmith 추적으로 병목 지점 실시간 파악
+   - 노드별 실행 시간 측정
 
 ## 🔒 보안 고려사항
 
@@ -307,39 +367,109 @@ AI 프롬프트 관리를 담당합니다:
 
 ## 🚀 배포 가이드
 
-### 로컬 배포
+### EC2 배포 (Production)
+
+현재 프로젝트는 AWS EC2 (Ubuntu 24.04)에 배포되어 있습니다.
+
+#### 1. EC2 인스턴스 설정
 
 ```bash
-# 프로덕션 모드로 실행
-poetry run uvicorn main:app --host 0.0.0.0 --port 8000
+# SSH 접속
+ssh -i ~/path/to/key.pem ubuntu@<EC2-IP>
+
+# 시스템 패키지 업데이트
+sudo apt update && sudo apt install -y python3-pip python3-venv curl
+
+# Poetry 설치
+curl -sSL https://install.python-poetry.org | python3 -
+echo 'export PATH="/home/ubuntu/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-### 클라우드 배포
+#### 2. 프로젝트 배포
 
-1. **Heroku 배포**:
-   ```bash
-   # Procfile 생성
-   echo "web: uvicorn main:app --host=0.0.0.0 --port=${PORT:-8000}" > Procfile
-   ```
+```bash
+# GitHub에서 클론 (SSH 키 설정 필요)
+git clone git@github.com:your-username/kakao-work-bot.git
+cd kakao-work-bot
 
-2. **Docker 배포**:
-   ```dockerfile
-   FROM python:3.11-slim
-   WORKDIR /app
-   COPY pyproject.toml poetry.lock ./
-   RUN pip install poetry && poetry install --no-root
-   COPY . .
-   CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-   ```
+# .env 파일 업로드 (로컬에서)
+scp -i ~/path/to/key.pem .env ubuntu@<EC2-IP>:~/kakao-work-bot/.env
+
+# 의존성 설치
+poetry install
+
+# 서버 실행
+poetry run python main.py
+```
+
+#### 3. Security Group 설정
+
+- 포트 22 (SSH)
+- 포트 80 (HTTP) 또는 8000 (개발)
+- 포트 443 (HTTPS)
+
+#### 4. 재배포 프로세스
+
+```bash
+# 로컬에서 변경사항 푸시
+git add .
+git commit -m "변경 내용"
+git push origin main
+
+# EC2에서 업데이트
+cd ~/kakao-work-bot
+git pull
+# Ctrl+C로 서버 종료
+poetry run python main.py
+```
+
+#### 5. 백그라운드 실행 (tmux 사용)
+
+```bash
+# tmux 세션 생성
+tmux new -s chatbot
+poetry run python main.py
+
+# Detach: Ctrl+B, D
+# 재접속: tmux attach -t chatbot
+```
+
+### Docker 배포 (선택사항)
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml poetry.lock ./
+RUN pip install poetry && poetry install --no-root
+COPY . .
+CMD ["poetry", "run", "python", "main.py"]
+```
 
 ## 📈 향후 개발 계획
 
-- [ ] 카카오톡 웹훅 연동 완성
-- [ ] 온보딩 플로우 구현
-- [ ] LangGraph 기반 복잡한 대화 흐름
-- [ ] 다양한 AI 모델 지원
-- [ ] 대화 분석 및 인사이트 기능
-- [ ] 모바일 앱 연동
+### 완료 ✅
+- [x] 카카오톡 웹훅 연동
+- [x] 온보딩 플로우 (9개 필드 수집)
+- [x] LangGraph 멀티 스텝 워크플로우
+- [x] 일일 기록 및 요약 기능
+- [x] 주간 피드백 생성
+- [x] LangSmith 모니터링
+- [x] EC2 프로덕션 배포
+- [x] 성능 최적화 (응답 2-4초)
+
+### 진행 중 🚧
+- [ ] 응답 속도 3초 이하 최적화
+- [ ] 주간 요약 테이블 생성
+- [ ] 온보딩 첫 사용자 환영 메시지 개선
+
+### 계획 📋
+- [ ] GPT-3.5-turbo 도입 (온보딩 전용)
+- [ ] systemd 서비스 등록 (서버 자동 재시작)
+- [ ] Nginx 리버스 프록시 (포트 80 → 8000)
+- [ ] HTTPS 설정 (Let's Encrypt)
+- [ ] 대화 분석 대시보드
+- [ ] 모바일 최적화
 
 ## 📞 지원 및 문의
 
