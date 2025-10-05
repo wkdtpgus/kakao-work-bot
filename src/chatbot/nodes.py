@@ -211,8 +211,8 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
         # 대화 히스토리 로드
         conversation_context = await memory_manager.get_contextualized_history(user_id, db)
 
-        # 현재 메시지를 히스토리에 임시 추가 (최근 10개만 사용 - 성능 최적화)
-        recent_turns = conversation_context["recent_turns"][-10:] if len(conversation_context["recent_turns"]) > 10 else conversation_context["recent_turns"]
+        # 현재 메시지를 히스토리에 임시 추가 (최근 3개만 사용 - 성능 최적화)
+        recent_turns = conversation_context["recent_turns"][-3:] if len(conversation_context["recent_turns"]) > 3 else conversation_context["recent_turns"]
         current_turn_history = recent_turns + [
             {"role": "user", "content": message}
         ]
