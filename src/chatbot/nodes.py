@@ -233,8 +233,9 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
         current_attempt = current_metadata.field_attempts.get(target_field, 0) + 1 if target_field else 1
 
         system_prompt = get_system_prompt()
+        # 온보딩은 과거 요약 불필요 (9개 필드만 채우면 됨)
         user_prompt = format_user_prompt(
-            message, current_state, conversation_context["summary"], current_turn_history,
+            message, current_state, "", current_turn_history,  # summary 제거
             target_field=target_field, current_attempt=current_attempt
         )
 

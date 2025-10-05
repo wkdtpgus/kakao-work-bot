@@ -13,8 +13,8 @@ class MemoryManager:
     """대화 메모리 관리 (숏텀 전략)"""
 
     def __init__(self):
-        self.recent_message_threshold = 10  # 최근 N개만 원문으로 유지
-        self.summary_trigger = 20  # N개 넘으면 요약 생성
+        self.recent_message_threshold = 3  # 최근 N개만 원문으로 유지 (성능 최적화)
+        self.summary_trigger = 10  # N개 넘으면 요약 생성
         self.cache = {}  # 임시 캐시 (비활성화됨)
 
     # ============================================
