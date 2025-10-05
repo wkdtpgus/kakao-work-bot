@@ -4,6 +4,7 @@ from ..config.config import (
     CHAT_TEMPERATURE,
     CHAT_MAX_TOKENS,
     CHAT_TIMEOUT,
+    ONBOARDING_MAX_TOKENS,
     SUMMARY_MODEL_NAME,
     SUMMARY_TEMPERATURE,
     SUMMARY_TIMEOUT,
@@ -15,6 +16,13 @@ CHAT_MODEL_CONFIG = {
     "model": CHAT_MODEL_NAME,
     "temperature": CHAT_TEMPERATURE,
     "max_tokens": CHAT_MAX_TOKENS,
+    "timeout": CHAT_TIMEOUT,
+}
+
+ONBOARDING_MODEL_CONFIG = {
+    "model": CHAT_MODEL_NAME,
+    "temperature": CHAT_TEMPERATURE,
+    "max_tokens": ONBOARDING_MAX_TOKENS,
     "timeout": CHAT_TIMEOUT,
 }
 

@@ -8,7 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from .workflow import build_workflow_graph
-from ..utils.models import CHAT_MODEL_CONFIG
+from ..utils.models import CHAT_MODEL_CONFIG, ONBOARDING_MODEL_CONFIG
 from ..utils.utils import simple_text_response, error_response
 from .memory_manager import MemoryManager
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
@@ -34,7 +34,7 @@ class GraphManager:
             memory_manager = MemoryManager()
 
             # 온보딩용 LLM (structured output)
-            chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
             onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
 
             # 서비스용 LLM (일반 채팅)
@@ -68,7 +68,7 @@ class GraphManager:
                 memory_manager = MemoryManager()
 
                 # 온보딩용 LLM
-                chat_model = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+                chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
                 onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
 
                 # 서비스용 LLM
