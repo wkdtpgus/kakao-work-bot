@@ -172,10 +172,12 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 
         current_attempt = current_metadata.field_attempts.get(target_field, 0) + 1 if target_field else 1
 
+        # 온보딩: 최근 1개 대화만 포함 (이름 확인 플로우 등에 필요)
+        recent_messages = await db.get_conversation_history(user_id, limit=1)
+
         system_prompt = get_system_prompt()
-        # 온보딩은 요약과 대화 히스토리 불필요 (current_state만으로 충분)
         user_prompt = format_user_prompt(
-            message, current_state, "", None,
+            message, current_state, "", recent_messages,
             target_field=target_field, current_attempt=current_attempt
         )
 
