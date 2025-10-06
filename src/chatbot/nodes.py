@@ -47,33 +47,18 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             k: user.get(k) for k in DATA_FIELDS
         })
 
-        # 🆕 conversation_states에서 field_attempts/field_status/question_turn 복원
+        # conversation_states에서 세션 상태 복원
         conv_state = await db.get_conversation_state(user_id)
-        print(f"🔍 [RouterNode] conv_state: {conv_state}")
-
         question_turn = 0
         daily_session_data = {}
 
         if conv_state and conv_state.get("temp_data"):
             temp_data = conv_state["temp_data"]
-            print(f"✅ [RouterNode] temp_data 복원: {temp_data}")
-
-            if "field_attempts" in temp_data:
-                metadata.field_attempts = temp_data["field_attempts"]
-                print(f"✅ [RouterNode] field_attempts 복원: {metadata.field_attempts}")
-            if "field_status" in temp_data:
-                metadata.field_status = temp_data["field_status"]
-                print(f"✅ [RouterNode] field_status 복원: {metadata.field_status}")
-
-            # 🆕 question_turn과 daily_session_data 복원
-            if "question_turn" in temp_data:
-                question_turn = temp_data["question_turn"]
-                print(f"✅ [RouterNode] question_turn 복원: {question_turn}")
-            if "daily_session_data" in temp_data:
-                daily_session_data = temp_data["daily_session_data"]
-                print(f"✅ [RouterNode] daily_session_data 복원: {daily_session_data}")
-        else:
-            print(f"⚠️ [RouterNode] temp_data 없음")
+            metadata.field_attempts = temp_data.get("field_attempts", {})
+            metadata.field_status = temp_data.get("field_status", {})
+            question_turn = temp_data.get("question_turn", 0)
+            daily_session_data = temp_data.get("daily_session_data", {})
+            logger.debug(f"[RouterNode] Restored temp_data for user_id={user_id}")
 
         # 온보딩 완료 체크 (9개 필드 전부 필수)
         is_complete = all([
@@ -88,17 +73,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             metadata.important_thing
         ])
 
-        print(f"🔍 [RouterNode] 온보딩 완료 체크:")
-        print(f"   - name: {metadata.name}")
-        print(f"   - job_title: {metadata.job_title}")
-        print(f"   - total_years: {metadata.total_years}")
-        print(f"   - job_years: {metadata.job_years}")
-        print(f"   - career_goal: {metadata.career_goal}")
-        print(f"   - project_name: {metadata.project_name}")
-        print(f"   - recent_work: {metadata.recent_work}")
-        print(f"   - job_meaning: {metadata.job_meaning}")
-        print(f"   - important_thing: {metadata.important_thing}")
-        print(f"   - 온보딩 완료: {is_complete}")
+        logger.info(f"[RouterNode] onboarding_complete={is_complete}, user_id={user_id}")
 
         user_context = UserContext(
             user_id=user_id,
@@ -110,14 +85,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
             daily_session_data=daily_session_data
         )
 
-        # 온보딩 완료 유저가 "온보딩 시작" 요청 시 확인 메시지
-        message = state.get("message", "").lower()
-        onboarding_keywords = ["온보딩", "처음부터", "초기화"]
-
-        if is_complete and any(keyword in message for keyword in onboarding_keywords):
-            logger.info(f"[RouterNode] 온보딩 완료 유저의 재시작 요청 감지")
-            return Command(update={"user_context": user_context}, goto="onboarding_agent_node")
-
+        # 온보딩 완료 여부에 따라 라우팅
         if is_complete:
             return Command(update={"user_context": user_context}, goto="service_router_node")
         else:
@@ -189,34 +157,6 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
     try:
         # 프롬프트 구성
         current_metadata = user_context.metadata if user_context.metadata else UserMetadata()
-
-        # 🔍 온보딩 완료 유저가 재진입한 경우 (온보딩 키워드 포함)
-        message_lower = message.lower()
-        onboarding_keywords = ["온보딩", "처음부터", "초기화", "수정", "정보 변경"]
-        is_already_complete = user_context.onboarding_stage == OnboardingStage.COMPLETED
-
-        if is_already_complete and any(keyword in message_lower for keyword in onboarding_keywords):
-            logger.info(f"[OnboardingAgent] 완료된 유저의 온보딩 재시작 요청 감지")
-            ai_response = "죄송합니다. 현재는 온보딩 정보를 수정하거나 초기화하는 기능이 없어요. 대신 오늘 하신 업무에 대해 이야기 나눠볼까요?"
-
-            # 대화 히스토리 저장
-            await db.save_message(user_id, "user", message)
-            await db.save_message(user_id, "assistant", ai_response)
-
-            return Command(
-                update={"ai_response": ai_response},
-                goto="__end__"
-            )
-
-        # 대화 히스토리 로드
-        conversation_context = await memory_manager.get_contextualized_history(user_id, db)
-
-        # 현재 메시지를 히스토리에 임시 추가 (최근 3개만 사용 - 성능 최적화)
-        recent_turns = conversation_context["recent_turns"][-3:] if len(conversation_context["recent_turns"]) > 3 else conversation_context["recent_turns"]
-        current_turn_history = recent_turns + [
-            {"role": "user", "content": message}
-        ]
-
         current_state = current_metadata.dict()
 
         # 🆕 현재 타겟 필드와 시도 횟수 정보 추가
@@ -233,25 +173,13 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
         current_attempt = current_metadata.field_attempts.get(target_field, 0) + 1 if target_field else 1
 
         system_prompt = get_system_prompt()
-        # 온보딩은 과거 요약 불필요 (9개 필드만 채우면 됨)
+        # 온보딩은 요약과 대화 히스토리 불필요 (current_state만으로 충분)
         user_prompt = format_user_prompt(
-            message, current_state, "", current_turn_history,  # summary 제거
+            message, current_state, "", None,
             target_field=target_field, current_attempt=current_attempt
         )
 
-        # 🔍 디버깅: LLM에게 전달되는 컨텍스트 확인
-        print(f"\n{'='*80}")
-        print(f"🔍 [OnboardingAgent] LLM에게 전달되는 정보:")
-        print(f"📝 현재 타겟 필드: {target_field}")
-        print(f"📝 시도 횟수: {current_attempt}")
-        print(f"📝 유저 메시지: {message}")
-        print(f"📝 대화 히스토리 (최근 5개):")
-        if state.get("conversation_history"):
-            for msg in state["conversation_history"][-5:]:
-                role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "unknown")
-                content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
-                print(f"   - {role}: {str(content)[:100]}...")
-        print(f"{'='*80}\n")
+        logger.info(f"[OnboardingAgent] target={target_field}, attempt={current_attempt}, message={message[:50]}")
 
         # LLM 호출 (structured output)
         response = await llm.ainvoke([
