@@ -90,12 +90,6 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
         if is_complete:
             return Command(update={"user_context": user_context}, goto="service_router_node")
         else:
-            # 온보딩 미완료 상태에서 재진입 시, 대화 히스토리가 너무 많으면 초기화
-            total_messages = await db.count_messages(user_id)
-            if total_messages > 5:  # 5개 넘으면 실패 패턴이 쌓인 것으로 판단
-                logger.info(f"[RouterNode] 온보딩 대화 히스토리 과다 감지 ({total_messages}개) - 초기화")
-                await db.delete_conversations(user_id)
-
             return Command(update={"user_context": user_context}, goto="onboarding_agent_node")
 
     except Exception as e:
@@ -176,6 +170,13 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
     print(f"🎯 [OnboardingAgent] 시작 - user_id: {user_id}, message: {message[:50]}")
 
     try:
+        # 온보딩 히스토리 과다 감지 시 초기화 (실패 패턴 누적 방지)
+        total_messages = await db.count_messages(user_id)
+        if total_messages > 10:  # 10개 넘으면 실패 패턴으로 판단
+            logger.warning(f"[OnboardingAgent] 대화 히스토리 과다 감지 ({total_messages}개) - 초기화")
+            await db.delete_conversations(user_id)
+            logger.info(f"[OnboardingAgent] 대화 히스토리 초기화 완료")
+
         # 프롬프트 구성
         current_metadata = user_context.metadata if user_context.metadata else UserMetadata()
         current_state = current_metadata.dict()
