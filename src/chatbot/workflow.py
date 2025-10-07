@@ -27,7 +27,7 @@ def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> Sta
                      partial(nodes.router_node, db=db))
 
     workflow.add_node("service_router_node",
-                     partial(nodes.service_router_node, llm=service_llm))
+                     partial(nodes.service_router_node, llm=service_llm, db=db, memory_manager=memory_manager))
 
     workflow.add_node("onboarding_agent_node",
                      partial(nodes.onboarding_agent_node, db=db, memory_manager=memory_manager, llm=onboarding_llm))

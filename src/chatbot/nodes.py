@@ -104,14 +104,28 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 # =============================================================================
 
 @traceable(name="service_router_node")
-async def service_router_node(state: OverallState, llm) -> Command[Literal["daily_agent_node", "weekly_agent_node"]]:
+async def service_router_node(state: OverallState, llm, db, memory_manager) -> Command[Literal["daily_agent_node", "weekly_agent_node", "__end__"]]:
     """사용자 의도 파악: 일일 기록 vs 주간 피드백"""
     message = state["message"]
     user_context = state["user_context"]
+    user_id = state["user_id"]
 
     logger.info(f"[ServiceRouter] message={message[:50]}")
 
     try:
+        # 온보딩 키워드 감지 (온보딩 완료 유저가 재시작 시도)
+        message_lower = message.strip().lower()
+        onboarding_keywords = ["온보딩", "처음부터", "초기화", "정보 수정"]
+
+        if any(keyword in message_lower for keyword in onboarding_keywords):
+            logger.info(f"[ServiceRouter] 온보딩 재시작 요청 감지 (완료된 유저)")
+            ai_response = f"안녕하세요, {user_context.metadata.name}님! 온보딩 정보 수정은 현재 지원하지 않아요. 대신 오늘 하신 업무에 대해 이야기 나눠볼까요?"
+
+            # 대화 저장
+            await memory_manager.add_messages(user_id, message, ai_response, db)
+
+            return Command(update={"ai_response": ai_response}, goto="__end__")
+
         # LLM으로 의도 분류
         prompt = f"""사용자 메시지: "{message}"
 
