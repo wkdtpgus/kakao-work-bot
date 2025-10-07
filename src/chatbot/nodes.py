@@ -91,7 +91,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
         else:
             # 온보딩 미완료 상태에서 재진입 시, 대화 히스토리가 너무 많으면 초기화
             total_messages = await db.count_messages(user_id)
-            if total_messages > 15:  # 15개 넘으면 실패 패턴이 쌓인 것으로 판단
+            if total_messages > 5:  # 5개 넘으면 실패 패턴이 쌓인 것으로 판단
                 logger.info(f"[RouterNode] 온보딩 대화 히스토리 과다 감지 ({total_messages}개) - 초기화")
                 await db.delete_conversations(user_id)
 
