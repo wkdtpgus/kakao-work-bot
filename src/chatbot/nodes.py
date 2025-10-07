@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 async def router_node(state: OverallState, db) -> Command[Literal["onboarding_agent_node", "service_router_node"]]:
     """온보딩 완료 여부 체크 후 분기"""
     user_id = state["user_id"]
+    logger.info(f"🔀 [RouterNode] 시작 - user_id={user_id}")
 
     try:
         # 사용자 정보 로드
