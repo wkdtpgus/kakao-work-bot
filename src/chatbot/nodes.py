@@ -297,7 +297,7 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 
 지금까지 공유해주신 소중한 이야기를 바탕으로, 앞으로 {updated_metadata.name}님의 커리어 여정을 함께하겠습니다.
 
-📝 **일일 기록 시작하기**
+📝 일일 기록 시작하기
 
 이제부터는 매일 업무를 기록하며 성장을 돌아볼 수 있어요. 아래처럼 자유롭게 말씀해주세요:
 
@@ -307,13 +307,20 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 
 제가 {updated_metadata.name}님의 이야기를 듣고, 더 깊이 생각해볼 수 있는 질문들을 드릴게요.
 
-언제든 편하게 말씀해주세요! 💬"""
+언제든 편하게 말씀해주세요!"""
 
             ai_response = completion_message
             logger.info(f"[OnboardingAgent] 온보딩 완료! user={user_id}")
 
         # 대화 저장
         await memory_manager.add_messages(user_id, message, ai_response, db)
+
+        # 온보딩 완료 후 대화 히스토리 초기화 (일일기록 시작 시 온보딩 대화 제외)
+        if is_onboarding_complete and not was_already_complete:
+            await db.delete_conversations(user_id)
+            # 완료 메시지만 다시 저장
+            await memory_manager.add_messages(user_id, "", ai_response, db)
+            logger.info(f"[OnboardingAgent] 온보딩 대화 히스토리 초기화 완료")
 
         logger.info(f"[OnboardingAgent] 응답: {ai_response[:50]}...")
 
@@ -346,8 +353,8 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
     logger.info(f"[DailyAgent] user_id={user_id}, turn={current_turn}, message={message[:50]}")
 
     try:
-        # 대화 히스토리 로드
-        conversation_context = await memory_manager.get_contextualized_history(user_id, db)
+        # 대화 히스토리 로드 (요약 없이 최근 10개만)
+        recent_turns = await db.get_conversation_history(user_id, limit=10)
         metadata = user_context.metadata
         llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -370,7 +377,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
             )
 
             messages = [SystemMessage(content=system_prompt)]
-            for turn in conversation_context["recent_turns"][-5:]:
+            for turn in recent_turns[-5:]:
                 if turn["role"] == "user":
                     messages.append(HumanMessage(content=turn["content"]))
                 else:
@@ -411,7 +418,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
 
                 # 요약 생성
                 ai_response, daily_count = await generate_daily_summary(
-                    user_id, metadata, conversation_context, llm, db
+                    user_id, metadata, {"recent_turns": recent_turns}, llm, db
                 )
 
                 # 7일차 체크
@@ -470,7 +477,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
 """
 
                     messages = [SystemMessage(content=system_prompt)]
-                    for turn in conversation_context["recent_turns"][-5:]:
+                    for turn in recent_turns[-5:]:
                         if turn["role"] == "user":
                             messages.append(HumanMessage(content=turn["content"]))
                         else:
