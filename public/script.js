@@ -1,5 +1,5 @@
 // 전역 변수
-let currentUserId = `test_user_${Date.now()}`;
+let currentUserId = '2871c5895ca869ade588bd23a20e7842c52acb03053fbc6e77f757a681a0732475';//`test_user_${Date.now()}`;
 let conversationHistory = [];
 let isTyping = false;
 

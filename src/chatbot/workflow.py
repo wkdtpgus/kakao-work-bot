@@ -15,7 +15,9 @@ def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> Sta
     START → router_node
       ├─ onboarding_agent_node → END
       └─ service_router_node
-          ├─ daily_agent_node → END
+          ├─ daily_agent_node
+          │   ├─ (일반) → END
+          │   └─ (7일차) → weekly_agent_node → END
           └─ weekly_agent_node → END
     """
 
