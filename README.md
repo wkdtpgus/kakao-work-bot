@@ -151,60 +151,31 @@ kakao-work-bot/
 
 ## 🗄️ 데이터베이스 구조
 
-### 테이블 스키마
+### 테이블 개요
 
-#### 1. `users` 테이블
-
-```sql
-CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  kakao_user_id VARCHAR(255) UNIQUE NOT NULL,
-  name VARCHAR(100),
-  job_title VARCHAR(200),
-  total_years VARCHAR(50),
-  job_years VARCHAR(50),
-  career_goal TEXT,
-  project_name TEXT,
-  recent_work TEXT,
-  job_meaning TEXT,
-  important_thing TEXT,
-  onboarding_completed BOOLEAN DEFAULT FALSE,
-  attendance_count INTEGER DEFAULT 0,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
-
-#### 2. `conversation_states` 테이블
-
-```sql
-CREATE TABLE conversation_states (
-  id SERIAL PRIMARY KEY,
-  kakao_user_id VARCHAR(255) NOT NULL,
-  current_step VARCHAR(100),
-  temp_data JSONB DEFAULT '{}',
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
-
-#### 3. `conversation_history` 테이블
-
-```sql
-CREATE TABLE conversation_history (
-  id SERIAL PRIMARY KEY,
-  user_id VARCHAR(255) NOT NULL,
-  role VARCHAR(50) NOT NULL,
-  content TEXT NOT NULL,
-  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
+| 테이블 | 설명 | 주요 컬럼 |
+|--------|------|-----------|
+| `users` | 사용자 프로필 | 온보딩 9개 필드, `daily_record_count` (7일 카운터) |
+| `conversation_states` | 대화 상태 | `current_step`, `temp_data` (JSONB) |
+| `ai_conversations` | 대화 히스토리 | `conversation_history` (JSONB 배열) |
+| `daily_records` | 일일 요약 | `work_content`, `record_date` (unique) |
+| `weekly_summaries` | 주간 요약 | `sequence_number`, `summary_content` |
 
 ### 데이터베이스 설정
 
 1. Supabase 프로젝트 생성
-2. SQL Editor에서 위 스키마 실행
-3. Row Level Security (RLS) 정책 설정
+2. SQL Editor에서 마이그레이션 스크립트 실행:
+   ```bash
+   # 기본 테이블 생성
+   supabase_migration.sql
+
+   # daily_records 관련 컬럼 추가
+   supabase_migration_daily_records.sql
+   ```
+3. Row Level Security (RLS) 정책 설정 (선택)
 4. API 키 및 URL을 `.env` 파일에 설정
+
+> 📝 상세한 스키마 정의는 `supabase_migration.sql` 파일을 참고하세요.
 
 ## 🔧 핵심 컴포넌트
 
@@ -221,22 +192,163 @@ LangGraph 워크플로우 관리자:
 멀티 스텝 워크플로우 정의:
 
 ```
-START → router_node
-  ├─ onboarding_agent_node → END
-  └─ service_router_node
-      ├─ daily_agent_node → END
-      └─ weekly_agent_node → END
+START
+  │
+  ▼
+router_node (온보딩 완료 체크)
+  ├── 온보딩 미완료 → onboarding_agent_node
+  │                   ├── 9개 필드 수집
+  │                   ├── 3회 시도 제한
+  │                   ├── field_status 추적
+  │                   └── END
+  │
+  └── 온보딩 완료 → service_router_node (의도 분류 - LLM)
+      ├── daily_record → daily_agent_node
+      ├── rejection (주간 요약 거절) → daily_agent_node
+      │   └── classify_user_intent (재분류)
+      │       ├── summary (요약 생성)
+      │       │   ├── daily_records 저장
+      │       │   ├── daily_record_count 증가
+      │       │   └── 7일차 체크
+      │       │       ├── Yes → weekly_summary_ready=True → temp_data 저장 → END
+      │       │       └── No → END
+      │       │
+      │       ├── rejection (요약 거절) → 세션 초기화 → END
+      │       ├── restart (재시작) → 세션 초기화 → END
+      │       │
+      │       └── continue (일반 대화)
+      │           └── 대화 횟수 카운팅
+      │               ├── 5회 이상 → 요약 제안 → END
+      │               └── 5회 미만 → 질문 생성 → END
+      │
+      └── weekly_feedback/weekly_acceptance → weekly_agent_node
+          ├── 7일차 자동: daily_records 7개 조회 → weekly_summaries 저장 → 카운터 리셋
+          └── 수동 요청: 7일 미달 → 참고용만 제공
+          └── END
 ```
 
-### 3. Nodes (`src/chatbot/nodes.py`)
+### 3. 노드별 상세 설명
 
-각 워크플로우 노드:
+#### 📍 **router_node** - 온보딩 완료 체크
 
-- **router_node**: 온보딩 완료 여부 체크
-- **onboarding_agent_node**: 9개 필드 수집 (이름, 직무, 연차 등)
-- **service_router_node**: 사용자 의도 분류 (일일기록/주간피드백)
-- **daily_agent_node**: 일일 업무 대화 및 요약
-- **weekly_agent_node**: 주간 피드백 생성
+**입력**: 사용자 메시지, `user_id`
+
+**처리**:
+1. `users` 테이블에서 사용자 정보 조회
+2. 9개 필수 필드 체크 (`name`, `job_title`, `total_years`, `job_years`, `career_goal`, `project_name`, `recent_work`, `job_meaning`, `important_thing`)
+3. `conversation_states.temp_data`에서 세션 상태 복원
+
+**출력**:
+- 온보딩 미완료 → `onboarding_agent_node`
+- 온보딩 완료 → `service_router_node`
+
+**DB 접근**:
+- 조회: `users`, `conversation_states`
+
+---
+
+#### 📍 **onboarding_agent_node** - 온보딩 정보 수집
+
+**입력**: 사용자 메시지, `user_context`
+
+**처리**:
+1. 최근 3개 대화 로드 (이름 확인 플로우)
+2. 현재 타겟 필드 결정 (null 필드 중 첫 번째)
+3. LLM Structured Output으로 정보 추출
+4. 필드별 시도 횟수 추적 (`field_attempts`)
+5. 3회 시도 실패 시 `[INSUFFICIENT]` 또는 `skipped` 처리
+6. 온보딩 완료 시 대화 히스토리 초기화
+
+**출력**: 온보딩 완료 메시지 → END
+
+**DB 접근**:
+- 저장: `users` (9개 필드)
+- 저장: `conversation_states.temp_data` (field_attempts, field_status)
+- 저장: `ai_conversations` (대화 저장)
+
+---
+
+#### 📍 **service_router_node** - 사용자 의도 분류
+
+**입력**: 사용자 메시지, `user_context`
+
+**처리**:
+1. LLM으로 의도 분류 (SERVICE_ROUTER_USER_PROMPT)
+   - `daily_record`: 일일 업무 기록
+   - `weekly_feedback`: 주간 요약 명시 요청
+   - `weekly_acceptance`: 7일차 주간 요약 수락
+   - `rejection`: 거절 → 플래그 정리
+
+**출력**:
+- `daily_record` / `rejection` → `daily_agent_node`
+- `weekly_feedback` / `weekly_acceptance` → `weekly_agent_node`
+
+**DB 접근**:
+- 조회/저장: `conversation_states.temp_data` (플래그 정리)
+- 저장: `ai_conversations` (대화 저장)
+
+---
+
+#### 📍 **daily_agent_node** - 일일 기록 처리
+
+**입력**: 사용자 메시지, `user_context`
+
+**처리**:
+1. 최신 20개 대화 로드 (최신순 정렬)
+2. `classify_user_intent`로 재분류:
+   - **`summary`**: 데일리 요약 생성 요청
+     - 최신 10개 대화 기반 요약 생성
+     - `daily_records` 테이블에 저장 (오늘 날짜)
+     - `users.daily_record_count` 증가
+     - **7일차 체크** (`daily_count % 7 == 0`):
+       - Yes → `weekly_summary_ready=True` 플래그 + "🎉 7일차 달성! 주간 요약도 보여드릴까요?"
+       - No → 일반 요약 완료 메시지
+   - **`rejection`**: 요약 제안 거절
+     - 세션 초기화 (`daily_session_data = {}`)
+     - "알겠습니다, 다시 시작할 때 편하게 말씀해주세요"
+   - **`restart`**: 새 일일 기록 시작
+     - 세션 초기화
+     - "새로운 일일 기록을 시작하겠습니다! 오늘은 어떤 업무를 하셨나요?"
+   - **`continue`**: 일반 대화 (기본값)
+     - 대화 횟수 카운팅 (`conversation_count`)
+     - **5회 이상** → "지금까지 내용을 정리해드릴까요?" 요약 제안
+     - **5회 미만** → 프롬프트 기반 질문 생성
+
+**출력**: AI 응답 → END
+
+**DB 접근**:
+- 조회: `ai_conversations` (대화 히스토리)
+- 저장: `daily_records` (summary일 때만)
+- 업데이트: `users.daily_record_count` (summary일 때만)
+- 저장: `conversation_states.temp_data` (세션 데이터, 플래그)
+- 저장: `ai_conversations` (대화 저장)
+
+---
+
+#### 📍 **weekly_agent_node** - 주간 피드백 생성
+
+**입력**: 사용자 메시지, `user_context`
+
+**처리**:
+1. `conversation_states.temp_data`에서 플래그 확인
+2. **7일차 자동 트리거** (`weekly_summary_ready=True`):
+   - `daily_records`에서 최근 7개 조회
+   - 주간 피드백 생성 (LLM)
+   - `weekly_summaries` 테이블에 저장
+   - `users.daily_record_count` = 0 (리셋)
+   - 플래그 정리 (`weekly_summary_ready`, `daily_count` 제거)
+3. **수동 요청**:
+   - 7일 미달 → 참고용 피드백 (DB 저장 X)
+   - 7일 달성 but 플래그 없음 → "이미 확인" 메시지
+
+**출력**: 주간 피드백 텍스트 → END
+
+**DB 접근**:
+- 조회: `conversation_states.temp_data`, `users`, `daily_records`
+- 저장: `weekly_summaries` (주간 요약 저장)
+- 업데이트: `users.daily_record_count` (리셋)
+- 저장: `conversation_states.temp_data` (플래그 정리)
+- 저장: `ai_conversations` (대화 저장)
 
 ### 4. MemoryManager (`src/chatbot/memory_manager.py`)
 

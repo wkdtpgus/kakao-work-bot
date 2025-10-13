@@ -35,29 +35,39 @@ async def generate_weekly_feedback(user_id: str, db, memory_manager) -> str:
         job_title = user.get("job_title", "직무 정보 없음")
         career_goal = user.get("career_goal", "목표 정보 없음")
 
-        # 2. 최근 대화 히스토리 조회 (전체 컨텍스트)
-        conversation_context = await memory_manager.get_contextualized_history(user_id, db)
+        # 2. 최근 7일치 일일 기록 조회
+        daily_records = await db.get_daily_records(user_id, limit=7)
 
-        # 3. 요약 + 최근 메시지 결합하여 컨텍스트 구성
-        summary = conversation_context.get("summary", "")
-        recent_turns = conversation_context.get("recent_turns", [])
+        if not daily_records or len(daily_records) == 0:
+            logger.warning(f"[WeeklyFeedback] 일일 기록 없음 → 대화 히스토리로 대체")
 
-        # 메시지 포맷팅
-        formatted_messages = []
-        for msg in recent_turns:
-            role = "사용자" if msg.get("role") == "user" else "AI"
-            content = msg.get("content", "")
-            formatted_messages.append(f"{role}: {content}")
+            # 대화 히스토리로 fallback (기존 로직)
+            conversation_context = await memory_manager.get_contextualized_history(user_id, db)
+            summary = conversation_context.get("summary", "")
+            recent_turns = conversation_context.get("recent_turns", [])
 
-        recent_conversation = "\n".join(formatted_messages)
+            formatted_messages = []
+            for msg in recent_turns:
+                role = "사용자" if msg.get("role") == "user" else "AI"
+                content = msg.get("content", "")
+                formatted_messages.append(f"{role}: {content}")
 
-        # 전체 컨텍스트 구성
-        if summary:
-            full_context = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{recent_conversation}"
+            recent_conversation = "\n".join(formatted_messages)
+
+            if summary:
+                full_context = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{recent_conversation}"
+            else:
+                full_context = f"[최근 대화]\n{recent_conversation}"
         else:
-            full_context = f"[최근 대화]\n{recent_conversation}"
+            # 일일 기록 기반 컨텍스트 구성
+            formatted_records = []
+            for record in reversed(daily_records):  # 오래된 순으로 정렬
+                record_date = record.get("record_date", "날짜 미상")
+                work_content = record.get("work_content", "")
+                formatted_records.append(f"**{record_date}**\n{work_content}")
 
-        logger.info(f"[WeeklyFeedback] 대화 컨텍스트 구성 완료 (메시지 {len(recent_turns)}개)")
+            full_context = "\n\n".join(formatted_records)
+            logger.info(f"[WeeklyFeedback] 일일 기록 기반 컨텍스트 구성 완료 ({len(daily_records)}일치)")
 
         # 4. 주간 피드백 프롬프트 구성
         system_prompt = WEEKLY_AGENT_SYSTEM_PROMPT.format(

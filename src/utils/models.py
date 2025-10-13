@@ -10,6 +10,7 @@ from ..config.config import (
     ONBOARDING_TIMEOUT,
     SUMMARY_MODEL_NAME,
     SUMMARY_TEMPERATURE,
+    SUMMARY_MAX_TOKENS,
     SUMMARY_TIMEOUT,
 )
 
@@ -32,5 +33,6 @@ ONBOARDING_MODEL_CONFIG = {
 SUMMARY_MODEL_CONFIG = {
     "model": SUMMARY_MODEL_NAME,
     "temperature": SUMMARY_TEMPERATURE,
+    "max_tokens": SUMMARY_MAX_TOKENS,
     "timeout": SUMMARY_TIMEOUT,
 }

@@ -221,7 +221,7 @@ class Database:
         limit: int = 10,
         offset: int = 0
     ) -> list:
-        """대화 히스토리 조회 - ai_conversations 테이블에서 JSON 파싱"""
+        """대화 히스토리 조회 - ai_conversations 테이블에서 JSON 파싱 (최신순)"""
         if not self.supabase:
             # Mock 모드
             if not hasattr(self, '_mock_conversations'):
@@ -231,7 +231,8 @@ class Database:
                 msg for msg in self._mock_conversations
                 if msg["user_id"] == user_id
             ]
-            # offset부터 limit개 가져오기
+            # 최신순으로 정렬 후 offset부터 limit개 가져오기
+            user_messages.sort(key=lambda x: x.get("created_at", ""), reverse=True)
             return user_messages[offset:offset + limit]
 
         try:
@@ -245,6 +246,9 @@ class Database:
                 return []
 
             history = response.data[0].get("conversation_history", [])
+
+            # 최신순으로 정렬 (created_at 기준 내림차순)
+            history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
             # offset과 limit 적용
             return history[offset:offset + limit]
@@ -431,21 +435,21 @@ class Database:
         try:
             # 현재 카운트 조회
             user = await self.get_user(user_id)
-            current_count = user.get("attendance_count", 0) if user else 0
+            current_count = user.get("daily_record_count", 0) if user else 0
 
             # 카운트 증가
             new_count = current_count + 1
 
             # DB 업데이트
             await self.create_or_update_user(user_id, {
-                "attendance_count": new_count
+                "daily_record_count": new_count
             })
 
-            print(f"✅ [DB] 출석 카운트 증가: {user_id} → {new_count}일차")
+            print(f"✅ [DB] 일일기록 카운트 증가: {user_id} → {new_count}일차")
             return new_count
 
         except Exception as e:
-            print(f"❌ [DB] 출석 카운트 증가 실패: {e}")
+            print(f"❌ [DB] 일일기록 카운트 증가 실패: {e}")
             return 0
 
     # =============================================================================
@@ -547,3 +551,130 @@ class Database:
         except Exception as e:
             print(f"❌ [DB] 최신 주간요약 조회 실패: {e}")
             return None
+
+    # =============================================================================
+    # 일일 기록 관리 (daily_records 테이블)
+    # =============================================================================
+
+    async def save_daily_record(
+        self,
+        user_id: str,
+        summary_content: str,
+        record_date: Optional[str] = None
+    ) -> bool:
+        """일일 기록 저장 (같은 날짜 있으면 업데이트)
+
+        Args:
+            user_id: 카카오 사용자 ID
+            summary_content: 일일 요약 내용
+            record_date: 기록 날짜 (YYYY-MM-DD), None이면 오늘 날짜
+
+        Returns:
+            bool: 성공 여부
+        """
+        if not self.supabase:
+            print("⚠️ [DB] Supabase 미연결 - 일일기록 저장 스킵")
+            return False
+
+        try:
+            # 날짜 설정 (None이면 오늘)
+            if not record_date:
+                record_date = datetime.now().date().isoformat()
+
+            # users 테이블에서 내부 user_id (bigint) 조회
+            user_response = self.supabase.table("users")\
+                .select("id")\
+                .eq("kakao_user_id", user_id)\
+                .single()\
+                .execute()
+
+            if not user_response.data:
+                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
+                return False
+
+            internal_user_id = user_response.data["id"]
+
+            # 데이터 구성
+            data = {
+                "user_id": internal_user_id,
+                "work_content": summary_content,
+                "record_date": record_date,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+
+            # upsert 사용 (user_id + record_date 조합으로 중복 체크)
+            # NOTE: 테이블에 UNIQUE(user_id, record_date) 제약조건 필요
+            self.supabase.table("daily_records")\
+                .upsert(data, on_conflict="user_id,record_date")\
+                .execute()
+
+            print(f"✅ [DB] 일일기록 저장 완료 (upsert): {user_id} - {record_date}")
+            return True
+
+        except Exception as e:
+            print(f"❌ [DB] 일일기록 저장 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def get_daily_records(
+        self,
+        user_id: str,
+        limit: int = 7,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> list:
+        """일일 기록 조회 (최신순)
+
+        Args:
+            user_id: 카카오 사용자 ID
+            limit: 조회할 기록 수 (기본 7개)
+            start_date: 시작 날짜 (YYYY-MM-DD), None이면 제한 없음
+            end_date: 종료 날짜 (YYYY-MM-DD), None이면 제한 없음
+
+        Returns:
+            list: 일일 기록 목록 [{record_date, work_content, ...}, ...]
+        """
+        if not self.supabase:
+            print("⚠️ [DB] Supabase 미연결 - 일일기록 조회 스킵")
+            return []
+
+        try:
+            # users 테이블에서 내부 user_id 조회
+            user_response = self.supabase.table("users")\
+                .select("id")\
+                .eq("kakao_user_id", user_id)\
+                .single()\
+                .execute()
+
+            if not user_response.data:
+                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
+                return []
+
+            internal_user_id = user_response.data["id"]
+
+            # 쿼리 구성
+            query = self.supabase.table("daily_records")\
+                .select("*")\
+                .eq("user_id", internal_user_id)
+
+            # 날짜 필터링
+            if start_date:
+                query = query.gte("record_date", start_date)
+            if end_date:
+                query = query.lte("record_date", end_date)
+
+            # 최신순 정렬 및 limit
+            response = query.order("record_date", desc=True).limit(limit).execute()
+
+            records = response.data if response.data else []
+            print(f"✅ [DB] 일일기록 조회 완료: {user_id} - {len(records)}개")
+
+            return records
+
+        except Exception as e:
+            print(f"❌ [DB] 일일기록 조회 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return []

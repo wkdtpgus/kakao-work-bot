@@ -135,11 +135,36 @@ async def service_router_node(state: OverallState, llm, db, memory_manager) -> C
 
         intent = response.content.strip().lower()
 
-        if "weekly" in intent:
-            logger.info(f"[ServiceRouter] Intent: weekly_feedback")
+        # 거절 감지 (주간 요약 제안 거절 → 플래그 정리)
+        if "rejection" in intent:
+            logger.info(f"[ServiceRouter] Intent: rejection → 주간 요약 플래그 정리 + daily_agent_node")
+
+            # weekly_summary_ready 플래그 정리
+            conv_state = await db.get_conversation_state(user_id)
+            temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+            if temp_data.get("weekly_summary_ready"):
+                temp_data.pop("weekly_summary_ready", None)
+                temp_data.pop("daily_count", None)
+                await db.upsert_conversation_state(
+                    user_id,
+                    current_step="weekly_feedback_rejected",
+                    temp_data=temp_data
+                )
+                logger.info(f"[ServiceRouter] 주간 요약 플래그 정리 완료")
+
+            return Command(update={"user_intent": UserIntent.DAILY_RECORD.value}, goto="daily_agent_node")
+
+        # 주간 요약 수락 (7일차 달성 후 "네" 등)
+        elif "weekly_acceptance" in intent:
+            logger.info(f"[ServiceRouter] Intent: weekly_acceptance → weekly_agent_node")
             return Command(update={"user_intent": UserIntent.WEEKLY_FEEDBACK.value}, goto="weekly_agent_node")
+        # 주간 피드백 명시적 요청
+        elif "weekly_feedback" in intent:
+            logger.info(f"[ServiceRouter] Intent: weekly_feedback → weekly_agent_node")
+            return Command(update={"user_intent": UserIntent.WEEKLY_FEEDBACK.value}, goto="weekly_agent_node")
+        # 일일 기록 (기본값)
         else:
-            logger.info(f"[ServiceRouter] Intent: daily_record")
+            logger.info(f"[ServiceRouter] Intent: daily_record → daily_agent_node")
             return Command(update={"user_intent": UserIntent.DAILY_RECORD.value}, goto="daily_agent_node")
 
     except Exception as e:
@@ -377,12 +402,18 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         logger.info(f"[DailyAgent] 현재 대화 횟수: {current_session_count}")
 
         # ========================================
-        # 사용자 의도 분류: 요약 요청 vs 일반 대화
+        # 사용자 의도 분류: 요약 요청 vs 거절 vs 재시작 vs 일반 대화
         # ========================================
         user_intent = await classify_user_intent(message, llm)
 
+        # 거절 (요약 제안 거절 → 세션 초기화하고 새 기록 시작 안내)
+        if "rejection" in user_intent:
+            logger.info(f"[DailyAgent] 거절 감지 → 세션 초기화")
+            user_context.daily_session_data = {}
+            ai_response_final = f"알겠습니다, {metadata.name}님! 다시 시작할 때 편하게 말씀해주세요."
+
         # 요약 요청
-        if "summary" in user_intent:
+        elif "summary" in user_intent:
             logger.info(f"[DailyAgent] 요약 생성 요청")
 
             # 요약 생성
@@ -390,34 +421,37 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
                 user_id, metadata, {"recent_turns": recent_turns}, llm, db
             )
 
-            # 7일차 체크 → weekly_agent_node로 라우팅
+            # 7일차 체크 → 하드코딩으로 즉시 제안 + 백그라운드 생성
             if daily_count % 7 == 0:
-                logger.info(f"[DailyAgent] 🎉 7일차 달성! → weekly_agent_node 라우팅")
+                logger.info(f"[DailyAgent] 🎉 7일차 달성! → 즉시 제안 + 백그라운드 생성 시작")
 
                 # 세션 초기화
                 user_context.daily_session_data = {}
 
-                # 대화 저장
-                await memory_manager.add_messages(user_id, message, ai_response, db)
+                # 즉시 응답 (지연 없이)
+                ai_response_with_suggestion = f"{ai_response}\n\n🎉 **7일차 달성!** 주간 요약도 보여드릴까요?"
 
-                # temp_data 업데이트
+                # 대화 저장
+                await memory_manager.add_messages(user_id, message, ai_response_with_suggestion, db)
+
+                # temp_data에 7일차 플래그 저장
                 existing_state = await db.get_conversation_state(user_id)
                 existing_temp_data = existing_state.get("temp_data", {}) if existing_state else {}
                 existing_temp_data["daily_session_data"] = {}
-                existing_temp_data["daily_summary_response"] = ai_response  # 임시 저장
+                existing_temp_data["weekly_summary_ready"] = True  # 주간 요약 생성 대기
                 existing_temp_data["daily_count"] = daily_count
 
                 await db.upsert_conversation_state(
                     user_id,
-                    current_step="daily_summary_completed",
+                    current_step="weekly_summary_pending",
                     temp_data=existing_temp_data
                 )
 
-                logger.info(f"[DailyAgent] 일일 요약 완료, weekly_agent_node로 라우팅")
+                logger.info(f"[DailyAgent] 데일리 요약 완료, 주간 요약은 사용자 요청 시 생성")
 
                 return Command(
-                    update={"ai_response": ai_response, "user_context": user_context},
-                    goto="weekly_agent_node"
+                    update={"ai_response": ai_response_with_suggestion, "user_context": user_context},
+                    goto="__end__"
                 )
 
             # 7일차 아니면 종료
@@ -504,8 +538,8 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
     """주간 피드백 생성 및 DB 저장
 
     호출 경로:
-    1. daily_agent_node → 7일차 달성 시 자동 라우팅
-    2. service_router_node → 사용자가 수동으로 주간 피드백 요청
+    1. service_router_node → 7일차 달성 후 사용자 수락 시 (weekly_acceptance)
+    2. service_router_node → 사용자가 수동으로 주간 피드백 요청 (weekly_feedback)
     """
 
     user_id = state["user_id"]
@@ -514,20 +548,18 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
     logger.info(f"[WeeklyAgent] user_id={user_id}, message={message}")
 
     try:
-        # temp_data에서 일일 요약 응답 및 출석일 가져오기 (7일차 자동 트리거 시)
+        # temp_data에서 7일차 플래그 확인
         conv_state = await db.get_conversation_state(user_id)
         temp_data = conv_state.get("temp_data", {}) if conv_state else {}
-        daily_summary_response = temp_data.get("daily_summary_response")
+        weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
         daily_count = temp_data.get("daily_count")
 
-        # 주간 피드백 생성
-        weekly_summary = await generate_weekly_feedback(user_id, db, memory_manager)
+        # 7일차 자동 트리거인 경우 (weekly_summary_ready 플래그가 True)
+        if weekly_summary_ready and daily_count and daily_count % 7 == 0:
+            logger.info(f"[WeeklyAgent] 7일차 수락 (daily_count={daily_count})")
 
-        # 7일차 자동 트리거인 경우: 일일 요약 + 주간 피드백 결합
-        if daily_summary_response and daily_count and daily_count % 7 == 0:
-            logger.info(f"[WeeklyAgent] 7일차 자동 트리거 (daily_count={daily_count})")
-
-            ai_response = f"{daily_summary_response}\n\n{'='*50}\n🎉 **7일차 달성!**\n{'='*50}\n\n{weekly_summary}"
+            # 주간 피드백 생성
+            weekly_summary = await generate_weekly_feedback(user_id, db, memory_manager)
 
             # 주간요약 DB 저장
             sequence_number = daily_count // 7
@@ -546,19 +578,47 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
             )
             logger.info(f"[WeeklyAgent] ✅ 주간요약 DB 저장 완료: {sequence_number}번째 ({start_daily_count}-{end_daily_count}일차)")
 
+            # daily_record_count 리셋 (새로운 주차 시작)
+            await db.create_or_update_user(user_id, {"daily_record_count": 0})
+            logger.info(f"[WeeklyAgent] ✅ daily_record_count 리셋 완료 (새로운 주차 시작)")
+
             # temp_data 정리
-            temp_data.pop("daily_summary_response", None)
+            temp_data.pop("weekly_summary_ready", None)
             temp_data.pop("daily_count", None)
             await db.upsert_conversation_state(user_id, current_step="weekly_feedback_completed", temp_data=temp_data)
 
-        # 수동 요청인 경우
-        else:
-            logger.info(f"[WeeklyAgent] 수동 요청")
             ai_response = weekly_summary
 
-        # 대화 저장 (7일차는 daily_agent에서 이미 저장했으므로 수동 요청 시만 저장)
-        if not daily_summary_response:
-            await memory_manager.add_messages(user_id, message, ai_response, db)
+        # 수동 요청인 경우 (7일 미달 체크)
+        else:
+            logger.info(f"[WeeklyAgent] 수동 요청")
+
+            # 현재 daily_record_count 확인
+            user = await db.get_user(user_id)
+            current_count = user.get("daily_record_count", 0)
+
+            # 7일 미달 시 참고용 피드백 제공
+            if current_count % 7 != 0:
+                logger.info(f"[WeeklyAgent] 7일 미달 (현재 {current_count}일차) → 참고용 피드백 제공")
+
+                # 임시 피드백 생성 (DB 저장 안 함)
+                partial_feedback = await generate_weekly_feedback(user_id, db, memory_manager)
+
+                ai_response = f"""아직 {current_count}일차예요. 7일차 달성 시 정식 주간요약이 생성되어 저장됩니다.
+
+📌 **지금까지의 활동 (참고용)**
+
+{partial_feedback}
+
+💡 이 내용은 참고용이며 DB에 저장되지 않습니다. 일일기록을 7회 완료하면 자동으로 주간요약이 생성되어 저장됩니다."""
+
+            # 7일차 정확히 달성했지만 플래그가 없는 경우 (이미 확인했거나 거절한 경우)
+            else:
+                logger.info(f"[WeeklyAgent] 7일차지만 플래그 없음 → 이미 처리됨")
+                ai_response = "해당 주간요약은 이미 확인하셨거나 확인 기간이 지났습니다. 다음 7일차에 새로운 주간요약을 확인하실 수 있어요."
+
+        # 대화 저장
+        await memory_manager.add_messages(user_id, message, ai_response, db)
 
         logger.info(f"[WeeklyAgent] 주간 피드백 생성 완료: {ai_response[:50]}...")
 

@@ -1,106 +1,171 @@
 -- ============================================
--- 카카오톡 챗봇 메모리 관리 테이블
+-- 3분 커리어 챗봇 - Supabase 마이그레이션
 -- ============================================
 
--- 1️⃣ conversations 테이블 (롱텀 메모리 - 대화 전문)
-CREATE TABLE IF NOT EXISTS conversations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content TEXT NOT NULL,
+-- ============================================
+-- 1. users 테이블 (사용자 프로필)
+-- ============================================
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    kakao_user_id TEXT UNIQUE NOT NULL,
+
+    -- 온보딩 필드 (9개)
+    name VARCHAR(100),
+    job_title VARCHAR(200),
+    total_years VARCHAR(50),
+    job_years VARCHAR(50),
+    career_goal TEXT,
+    project_name TEXT,
+    recent_work TEXT,
+    job_meaning TEXT,
+    important_thing TEXT,
+
+    -- 카운터
+    daily_record_count INTEGER DEFAULT 0,
+    last_record_date DATE,
+
+    -- 타임스탬프
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    -- users 테이블과 연결 (사용자 삭제 시 대화도 삭제)
-    CONSTRAINT fk_user
-        FOREIGN KEY (user_id)
-        REFERENCES users(kakao_user_id)
-        ON DELETE CASCADE
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 인덱스: 사용자별 최근 대화 조회 최적화
-CREATE INDEX IF NOT EXISTS idx_conversations_user_created
-ON conversations(user_id, created_at DESC);
-
--- 인덱스: 날짜별 조회 최적화
-CREATE INDEX IF NOT EXISTS idx_conversations_created
-ON conversations(created_at DESC);
-
-COMMENT ON TABLE conversations IS '모든 대화 기록 (롱텀 메모리 - 영구 보관)';
-COMMENT ON COLUMN conversations.user_id IS '카카오톡 사용자 ID';
-COMMENT ON COLUMN conversations.role IS '발화자 (user: 사용자, assistant: AI)';
-COMMENT ON COLUMN conversations.content IS '대화 내용';
+COMMENT ON TABLE users IS '사용자 프로필 및 온보딩 정보';
+COMMENT ON COLUMN users.daily_record_count IS '일일 기록 횟수 (7일마다 리셋)';
+COMMENT ON COLUMN users.last_record_date IS '마지막 기록 날짜';
 
 -- ============================================
-
--- 2️⃣ conversation_summaries 테이블 (숏텀 메모리 - 요약)
-CREATE TABLE IF NOT EXISTS conversation_summaries (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id TEXT NOT NULL UNIQUE,
-    summary TEXT NOT NULL,
-    summarized_until INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    -- users 테이블과 연결
-    CONSTRAINT fk_summary_user
-        FOREIGN KEY (user_id)
-        REFERENCES users(kakao_user_id)
-        ON DELETE CASCADE
-);
-
--- 인덱스: 사용자별 요약 조회
-CREATE INDEX IF NOT EXISTS idx_summaries_user
-ON conversation_summaries(user_id);
-
-COMMENT ON TABLE conversation_summaries IS '대화 요약 (숏텀 메모리 - LLM 컨텍스트용)';
-COMMENT ON COLUMN conversation_summaries.summary IS '대화 요약 텍스트';
-COMMENT ON COLUMN conversation_summaries.summarized_until IS '몇 번째 메시지까지 요약했는지';
-
+-- 2. conversation_states 테이블 (대화 상태)
 -- ============================================
-
--- 3️⃣ 기존 테이블 확인용 쿼리 (실행 후 확인)
--- SELECT table_name FROM information_schema.tables
--- WHERE table_schema = 'public'
--- AND table_name IN ('users', 'conversations', 'conversation_summaries', 'conversation_states');
-
--- ============================================
-
--- 3️⃣ conversation_states 테이블 (대화 상태 및 임시 데이터)
 CREATE TABLE IF NOT EXISTS conversation_states (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    kakao_user_id TEXT NOT NULL UNIQUE,
+    kakao_user_id TEXT UNIQUE NOT NULL,
     current_step TEXT,
     temp_data JSONB DEFAULT '{}'::jsonb,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    -- users 테이블과 연결
     CONSTRAINT fk_state_user
         FOREIGN KEY (kakao_user_id)
         REFERENCES users(kakao_user_id)
         ON DELETE CASCADE
 );
 
--- 인덱스: 사용자별 상태 조회
 CREATE INDEX IF NOT EXISTS idx_conversation_states_user
 ON conversation_states(kakao_user_id);
 
-COMMENT ON TABLE conversation_states IS '대화 상태 및 임시 데이터 (온보딩 진행 상태, field_attempts 등)';
-COMMENT ON COLUMN conversation_states.current_step IS '현재 대화 단계 (onboarding, ai_intro, ai_conversation 등)';
-COMMENT ON COLUMN conversation_states.temp_data IS '임시 데이터 (field_attempts, field_status 등 JSON)';
+COMMENT ON TABLE conversation_states IS '대화 상태 및 임시 데이터';
+COMMENT ON COLUMN conversation_states.current_step IS '현재 대화 단계 (onboarding, daily_recording, weekly_summary_pending 등)';
+COMMENT ON COLUMN conversation_states.temp_data IS '임시 데이터 (field_attempts, field_status, daily_session_data, weekly_summary_ready 등)';
+
+-- temp_data 구조 예시:
+-- {
+--   "field_attempts": {"name": 1, "job_title": 2},
+--   "field_status": {"name": "filled", "job_title": "filled"},
+--   "daily_session_data": {"conversation_count": 3},
+--   "weekly_summary_ready": true,
+--   "daily_count": 7
+-- }
 
 -- ============================================
+-- 3. ai_conversations 테이블 (대화 히스토리)
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_conversations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    kakao_user_id TEXT UNIQUE NOT NULL,
+    conversation_history JSONB DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
--- 4️⃣ Row Level Security (RLS) 설정 (선택적)
+    CONSTRAINT fk_conversations_user
+        FOREIGN KEY (kakao_user_id)
+        REFERENCES users(kakao_user_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_user
+ON ai_conversations(kakao_user_id);
+
+COMMENT ON TABLE ai_conversations IS '대화 히스토리 (JSONB 배열)';
+COMMENT ON COLUMN ai_conversations.conversation_history IS '대화 배열 [{"role": "user", "content": "...", "created_at": "..."}]';
+
+-- conversation_history 구조 예시:
+-- [
+--   {"role": "user", "content": "안녕", "created_at": "2025-10-13T12:00:00Z"},
+--   {"role": "assistant", "content": "반갑습니다", "created_at": "2025-10-13T12:00:01Z"}
+-- ]
+
+-- ============================================
+-- 4. daily_records 테이블 (일일 요약)
+-- ============================================
+CREATE TABLE IF NOT EXISTS daily_records (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    work_content TEXT NOT NULL,
+    record_date DATE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT fk_daily_records_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    -- 같은 날짜는 하나의 요약만 (upsert 지원)
+    CONSTRAINT daily_records_user_id_record_date_key
+        UNIQUE (user_id, record_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_records_user_date
+ON daily_records(user_id, record_date DESC);
+
+COMMENT ON TABLE daily_records IS '일일 요약 저장 (같은 날짜는 최신 내용으로 업데이트)';
+COMMENT ON COLUMN daily_records.work_content IS '일일 요약 내용';
+COMMENT ON COLUMN daily_records.record_date IS '기록 날짜 (YYYY-MM-DD)';
+
+-- ============================================
+-- 5. weekly_summaries 테이블 (주간 요약)
+-- ============================================
+CREATE TABLE IF NOT EXISTS weekly_summaries (
+    id BIGSERIAL PRIMARY KEY,
+    kakao_user_id TEXT NOT NULL,
+    sequence_number INTEGER NOT NULL,
+    start_daily_count INTEGER NOT NULL,
+    end_daily_count INTEGER NOT NULL,
+    summary_content TEXT NOT NULL,
+    start_date DATE,
+    end_date DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    CONSTRAINT fk_weekly_summaries_user
+        FOREIGN KEY (kakao_user_id)
+        REFERENCES users(kakao_user_id)
+        ON DELETE CASCADE,
+
+    -- 같은 시퀀스 번호는 하나만 (upsert 지원)
+    CONSTRAINT weekly_summaries_user_sequence_key
+        UNIQUE (kakao_user_id, sequence_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_summaries_user
+ON weekly_summaries(kakao_user_id, sequence_number DESC);
+
+COMMENT ON TABLE weekly_summaries IS '주간 요약 저장 (7일차마다 생성)';
+COMMENT ON COLUMN weekly_summaries.sequence_number IS '몇 번째 주차 (1, 2, 3, ...)';
+COMMENT ON COLUMN weekly_summaries.start_daily_count IS '시작 일일기록 번호 (1, 8, 15, ...)';
+COMMENT ON COLUMN weekly_summaries.end_daily_count IS '종료 일일기록 번호 (7, 14, 21, ...)';
+
+-- ============================================
+-- 6. Row Level Security (RLS) 설정 (선택)
+-- ============================================
 -- Supabase에서 보안 강화를 원한다면 활성화
 
--- ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE conversation_summaries ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE conversation_states ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE daily_records ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE weekly_summaries ENABLE ROW LEVEL SECURITY;
 
--- CREATE POLICY "Users can view their own conversations"
--- ON conversations FOR SELECT
--- USING (user_id = current_setting('request.jwt.claim.user_id', true));
-
--- CREATE POLICY "Users can view their own summaries"
--- ON conversation_summaries FOR SELECT
--- USING (user_id = current_setting('request.jwt.claim.user_id', true));
+-- 예시: 사용자는 자신의 데이터만 조회 가능
+-- CREATE POLICY "Users can view their own data"
+-- ON users FOR SELECT
+-- USING (kakao_user_id = current_setting('request.jwt.claim.user_id', true));
 
 -- ============================================

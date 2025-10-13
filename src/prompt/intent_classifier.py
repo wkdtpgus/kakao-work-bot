@@ -1,3 +1,4 @@
+# 추후 통합 가능성 있음
 # ============================================================================
 # 1. 일일기록 세션 내 의도 분류 (summary/continue/restart)
 # ============================================================================
@@ -6,22 +7,25 @@ INTENT_CLASSIFICATION_SYSTEM_PROMPT = "You are an expert at classifying user int
 INTENT_CLASSIFICATION_USER_PROMPT = """User message: "{message}"
 
 Classify the user's intent into one of the following:
-- summary: User wants to summarize and finish the current session (e.g., "정리해줘", "요약해줘", "끝", "완료", "네")
-- continue: User wants to continue the conversation (e.g., "더 얘기할래", "이것도 말하고 싶어")
-- restart: User wants to start a new daily record session (e.g., "다시 시작", "처음부터", "일일기록 시작", "새로")
+- summary: User explicitly wants to generate/create a daily summary (e.g., "데일리 요약 생성", "데일리 요약 생성해줘", "오늘 요약해줘", "요약 만들어줘", "정리해줘", "요약해줘") OR wants to summarize and finish the current session
+- rejection: User is rejecting or canceling the current suggestion
+- continue: User wants to continue the conversation
+- restart: User wants to start a new daily record session
 
-Response format: Only return one of: summary, continue, restart"""
+Response format: Only return one of: summary, rejection, continue, restart"""
 
 
 # ============================================================================
-# 2. 서비스 라우터 의도 분류 (daily_record vs weekly_feedback)
+# 2. 서비스 라우터 의도 분류 (daily_record vs weekly_feedback vs weekly_acceptance vs rejection)
 # ============================================================================
-SERVICE_ROUTER_SYSTEM_PROMPT = "당신은 사용자 의도를 정확히 분류하는 전문가입니다."
+SERVICE_ROUTER_SYSTEM_PROMPT = "You are an expert at classifying user intent accurately."
 
-SERVICE_ROUTER_USER_PROMPT = """사용자 메시지: "{message}"
+SERVICE_ROUTER_USER_PROMPT = """User message: "{message}"
 
-위 메시지의 의도를 다음 중 하나로 분류해주세요:
-- daily_record: 오늘 한 일, 업무 기록, 회고 등
-- weekly_feedback: 주간 피드백, 이번 주 정리, 한 주 돌아보기 등
+Classify the user's intent into one of the following:
+- daily_record: Daily work, task recording, reflection
+- weekly_feedback: User explicitly requests weekly summary
+- weekly_acceptance: User accepts/confirms to see weekly summary (positive responses like yes, okay, sure)
+- rejection: User rejects suggestion and wants to do something else
 
-응답 형식: daily_record 또는 weekly_feedback"""
+Response format: Only return one of: daily_record, weekly_feedback, weekly_acceptance, rejection"""

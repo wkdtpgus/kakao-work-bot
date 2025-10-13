@@ -72,11 +72,11 @@ class MemoryManager:
             else:
                 print(f"✅ 기존 요약 사용: {user_id}")
 
-            # 5️⃣ 최근 N개 메시지 가져오기
+            # 5️⃣ 최근 N개 메시지 가져오기 (최신순 정렬이므로 offset=0)
             recent_messages = await database.get_conversation_history(
                 user_id,
                 limit=self.recent_message_threshold,
-                offset=total_messages - self.recent_message_threshold
+                offset=0
             )
 
             return {
@@ -118,15 +118,20 @@ class MemoryManager:
 
             if old_summary:
                 # 기존 요약 + 새 메시지 통합 요약
-                offset = old_summary["summarized_until"]
-                new_message_count = summarize_until - offset
+                already_summarized = old_summary["summarized_until"]
+                new_message_count = summarize_until - already_summarized
 
                 if new_message_count > 0:
+                    # 최신순 정렬이므로, 전체 - already_summarized부터 new_message_count개 가져오기
+                    # 즉, offset = already_summarized로 이미 요약된 메시지를 건너뛰고
+                    # 아직 요약 안 된 메시지만 가져오기
                     new_messages = await database.get_conversation_history(
                         user_id,
-                        offset=offset,
-                        limit=new_message_count
+                        limit=summarize_until,  # 전체 요약할 메시지 수
+                        offset=0
                     )
+                    # 이미 요약된 부분 제외 (최신순이므로 앞에서부터 잘라내기)
+                    new_messages = new_messages[already_summarized:]
 
                     prompt = f"""이전 대화 요약:
 {old_summary["summary"]}
