@@ -1,4 +1,4 @@
-from langchain_openai import ChatOpenAI
+from langchain_google_vertexai import ChatVertexAI
 from ..config.config import (
     CHAT_MODEL_NAME,
     CHAT_TEMPERATURE,
@@ -15,24 +15,21 @@ from ..config.config import (
 )
 
 
-# 모델 설정만 저장 (API 키는 사용처에서 주입)
+# 모델 설정만 저장
 CHAT_MODEL_CONFIG = {
-    "model": CHAT_MODEL_NAME,
+    "model_name": CHAT_MODEL_NAME,
     "temperature": CHAT_TEMPERATURE,
-    "max_tokens": CHAT_MAX_TOKENS,
-    "timeout": CHAT_TIMEOUT,
+    "max_output_tokens": CHAT_MAX_TOKENS,
 }
 
 ONBOARDING_MODEL_CONFIG = {
-    "model": ONBOARDING_MODEL_NAME,
+    "model_name": ONBOARDING_MODEL_NAME,
     "temperature": ONBOARDING_TEMPERATURE,
-    "max_tokens": ONBOARDING_MAX_TOKENS,
-    "timeout": ONBOARDING_TIMEOUT,
+    "max_output_tokens": ONBOARDING_MAX_TOKENS,
 }
 
 SUMMARY_MODEL_CONFIG = {
-    "model": SUMMARY_MODEL_NAME,
+    "model_name": SUMMARY_MODEL_NAME,
     "temperature": SUMMARY_TEMPERATURE,
-    "max_tokens": SUMMARY_MAX_TOKENS,
-    "timeout": SUMMARY_TIMEOUT,
+    "max_output_tokens": SUMMARY_MAX_TOKENS,
 }

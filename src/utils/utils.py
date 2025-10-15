@@ -2,7 +2,7 @@ import re
 import random
 import os
 from typing import List, Dict, Any
-from langchain_openai import ChatOpenAI
+# from langchain_google_vertexai import ChatVertexAI  # 현재 미사용
 from ..prompt.onboarding import ONBOARDING_SYSTEM_PROMPT, ONBOARDING_USER_PROMPT_TEMPLATE
 
 

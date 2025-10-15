@@ -12,7 +12,7 @@ from ..utils.models import CHAT_MODEL_CONFIG, ONBOARDING_MODEL_CONFIG
 from ..utils.utils import simple_text_response, error_response
 from .memory_manager import MemoryManager
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
-from langchain_openai import ChatOpenAI
+from langchain_google_vertexai import ChatVertexAI
 import os
 
 logger = logging.getLogger(__name__)
@@ -34,11 +34,11 @@ class GraphManager:
             memory_manager = MemoryManager()
 
             # 온보딩용 LLM (structured output)
-            chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            chat_model = ChatVertexAI(**ONBOARDING_MODEL_CONFIG)
             onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
 
             # 서비스용 LLM (일반 채팅)
-            service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+            service_llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
             main_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
             self.graph_types["main"] = main_graph
@@ -68,11 +68,11 @@ class GraphManager:
                 memory_manager = MemoryManager()
 
                 # 온보딩용 LLM
-                chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+                chat_model = ChatVertexAI(**ONBOARDING_MODEL_CONFIG)
                 onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
 
                 # 서비스용 LLM
-                service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+                service_llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
                 user_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
             else:

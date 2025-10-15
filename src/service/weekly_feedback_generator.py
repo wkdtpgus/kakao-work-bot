@@ -1,6 +1,6 @@
 """주간 피드백 생성 서비스"""
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_google_vertexai import ChatVertexAI
 from ..prompt.weekly_summary_prompt import WEEKLY_AGENT_SYSTEM_PROMPT
 from ..utils.models import CHAT_MODEL_CONFIG
 from langsmith import traceable
@@ -78,7 +78,7 @@ async def generate_weekly_feedback(user_id: str, db, memory_manager) -> str:
         )
 
         # 5. LLM 호출
-        llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+        llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
         response = await llm.ainvoke([
             SystemMessage(content=system_prompt),

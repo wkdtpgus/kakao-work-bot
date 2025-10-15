@@ -4,7 +4,7 @@ from ..prompt.onboarding import ONBOARDING_SYSTEM_PROMPT, ONBOARDING_USER_PROMPT
 from ..prompt.daily_record_prompt import DAILY_CONVERSATION_SYSTEM_PROMPT
 from ..prompt.intent_classifier import SERVICE_ROUTER_SYSTEM_PROMPT, SERVICE_ROUTER_USER_PROMPT
 from ..service import classify_user_intent, generate_daily_summary, generate_weekly_feedback
-from langchain_openai import ChatOpenAI
+from langchain_google_vertexai import ChatVertexAI
 from ..utils.models import CHAT_MODEL_CONFIG
 import logging
 from typing import Literal
@@ -395,7 +395,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         # 대화 히스토리 로드
         recent_turns = await db.get_conversation_history(user_id, limit=20)
         metadata = user_context.metadata
-        llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+        llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
         # 현재 세션의 대화 횟수 계산 (user + bot 쌍 = 1회)
         current_session_count = user_context.daily_session_data.get("conversation_count", 0)
