@@ -257,6 +257,63 @@ class Database:
             print(f"대화 히스토리 조회 오류: {e}")
             return []
 
+    async def get_conversation_history_by_date(
+        self,
+        user_id: str,
+        date: str,
+        limit: int = 50
+    ) -> list:
+        """특정 날짜의 대화 히스토리만 조회 (요약 생성용)
+
+        Args:
+            user_id: 사용자 ID
+            date: 조회할 날짜 (YYYY-MM-DD)
+            limit: 최대 조회 개수
+
+        Returns:
+            list: 해당 날짜의 대화 히스토리 (시간순)
+        """
+        if not self.supabase:
+            # Mock 모드
+            if not hasattr(self, '_mock_conversations'):
+                return []
+
+            user_messages = [
+                msg for msg in self._mock_conversations
+                if msg["user_id"] == user_id and msg.get("created_at", "")[:10] == date
+            ]
+            # 시간순으로 정렬
+            user_messages.sort(key=lambda x: x.get("created_at", ""))
+            return user_messages[:limit]
+
+        try:
+            # ai_conversations 테이블에서 conversation_history JSON 가져오기
+            response = self.supabase.table("ai_conversations") \
+                .select("conversation_history") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if not response.data or len(response.data) == 0:
+                return []
+
+            history = response.data[0].get("conversation_history", [])
+
+            # 해당 날짜의 대화만 필터링 (YYYY-MM-DD 형식)
+            today_history = [
+                turn for turn in history
+                if turn.get("created_at", "")[:10] == date
+            ]
+
+            # 시간순으로 정렬 (오래된 순 → 최신 순)
+            today_history.sort(key=lambda x: x.get("created_at", ""))
+
+            # limit 적용
+            return today_history[:limit]
+
+        except Exception as e:
+            print(f"날짜별 대화 히스토리 조회 오류: {e}")
+            return []
+
     async def count_messages(self, user_id: str) -> int:
         """사용자의 전체 메시지 개수 - ai_conversations JSON 길이"""
         if not self.supabase:
@@ -423,33 +480,81 @@ class Database:
     # 일일기록 카운트 관리
     # ============================================
 
-    async def increment_attendance_count(self, user_id: str) -> int:
-        """출석(일일기록) 카운트 증가 및 현재 카운트 반환"""
-        if not self.supabase:
-            # Mock 모드
-            if not hasattr(self, '_mock_attendance_counts'):
-                self._mock_attendance_counts = {}
-            self._mock_attendance_counts[user_id] = self._mock_attendance_counts.get(user_id, 0) + 1
-            return self._mock_attendance_counts[user_id]
+    async def increment_daily_record_count(self, user_id: str) -> int:
+        """오늘의 대화 턴 수 증가 (날짜 변경 시 자동 리셋)
 
+        Returns:
+            int: 증가된 daily_record_count
+        """
         try:
-            # 현재 카운트 조회
+            today = datetime.now().date().isoformat()
             user = await self.get_user(user_id)
-            current_count = user.get("daily_record_count", 0) if user else 0
 
-            # 카운트 증가
-            new_count = current_count + 1
+            if not user:
+                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
+                return 0
 
-            # DB 업데이트
+            # updated_at에서 날짜 부분만 추출 (YYYY-MM-DD)
+            updated_at = user.get("updated_at", "")
+            last_record_date = updated_at[:10] if updated_at else None
+            current_daily_count = user.get("daily_record_count", 0)
+
+            if last_record_date == today:
+                # 오늘 대화 → 카운트 증가
+                new_daily_count = current_daily_count + 1
+            else:
+                # 날짜 변경 → 리셋 후 1로 시작
+                new_daily_count = 1
+                print(f"📅 [DB] 날짜 변경 감지 → daily_record_count 리셋: {user_id}")
+
             await self.create_or_update_user(user_id, {
-                "daily_record_count": new_count
+                "daily_record_count": new_daily_count
             })
+            print(f"✅ [DB] daily_record_count 업데이트: {user_id} → {new_daily_count}회")
+            return new_daily_count
 
-            print(f"✅ [DB] 일일기록 카운트 증가: {user_id} → {new_count}일차")
+        except Exception as e:
+            print(f"❌ [DB] daily_record_count 증가 실패: {e}")
+            return 0
+
+    async def increment_attendance_count(self, user_id: str, daily_record_count: int) -> int:
+        """출석(일일기록) 카운트 증가 및 현재 카운트 반환 (5회 턴 조건)
+
+        Args:
+            user_id: 사용자 ID
+            daily_record_count: 오늘의 대화 턴 수
+
+        Returns:
+            int: 업데이트된 attendance_count
+
+        로직:
+            - daily_record_count가 정확히 5일 때만 호출됨 (nodes.py에서 제어)
+            - 호출되면 무조건 +1 증가 (중복 체크는 nodes.py의 "== 5" 조건이 자동으로 방지)
+        """
+        try:
+            user = await self.get_user(user_id)
+
+            if not user:
+                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
+                return 0
+
+            current_count = user.get("attendance_count", 0)
+
+            # 안전장치: 5회 미만이면 증가 안 함
+            if daily_record_count < 5:
+                print(f"⏳ [DB] 대화 턴 부족 (현재 {daily_record_count}회, 5회 필요): {user_id}")
+                return current_count
+
+            # 5회 달성 → 카운트 증가
+            new_count = current_count + 1
+            await self.create_or_update_user(user_id, {
+                "attendance_count": new_count
+            })
+            print(f"✅ [DB] attendance_count 증가 (5회 턴 달성): {user_id} → {new_count}일차")
             return new_count
 
         except Exception as e:
-            print(f"❌ [DB] 일일기록 카운트 증가 실패: {e}")
+            print(f"❌ [DB] attendance_count 증가 실패: {e}")
             return 0
 
     # =============================================================================
@@ -610,6 +715,7 @@ class Database:
                 .execute()
 
             print(f"✅ [DB] 일일기록 저장 완료 (upsert): {user_id} - {record_date}")
+
             return True
 
         except Exception as e:

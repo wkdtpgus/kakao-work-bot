@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
     important_thing TEXT,
 
     -- 카운터
+    attendance_count INTEGER DEFAULT 0,
     daily_record_count INTEGER DEFAULT 0,
     last_record_date DATE,
 
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 COMMENT ON TABLE users IS '사용자 프로필 및 온보딩 정보';
-COMMENT ON COLUMN users.daily_record_count IS '일일 기록 횟수 (7일마다 리셋)';
+COMMENT ON COLUMN users.attendance_count IS '출석(일일기록) 누적 카운트 (리셋 없이 계속 증가, % 7 == 0일 때 주간 요약 생성)';
+COMMENT ON COLUMN users.daily_record_count IS '오늘의 대화 턴 수 (날짜 변경 시 0으로 리셋, 5회 이상이면 attendance_count 증가)';
 COMMENT ON COLUMN users.last_record_date IS '마지막 기록 날짜';
 
 -- ============================================

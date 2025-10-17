@@ -67,7 +67,7 @@ class UserContext(BaseModel):
     user_id: str
     onboarding_stage: OnboardingStage = OnboardingStage.NOT_STARTED
     metadata: Optional[UserMetadata] = None
-    daily_record_count: int = 0  # 일일 기록 횟수
+    attendance_count: int = 0  # 출석(일일기록) 카운트
     last_record_date: Optional[str] = None
     daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (대화 횟수 추적)
 

@@ -59,15 +59,21 @@ async def generate_daily_summary(
 
     summary_text = summary_response.content
 
-    # 출석 카운트 증가
-    daily_count = await db.increment_attendance_count(user_id)
-    logger.info(f"[DailyAgent] 일일기록 {daily_count}일차 완료")
+    # 현재 출석 카운트 조회 (증가는 daily_agent_node에서 처리)
+    user = await db.get_user(user_id)
+    daily_count = user.get("attendance_count", 0)
+    daily_record_count = user.get("daily_record_count", 0)
+
+    logger.info(f"[DailySummary] 요약 생성 완료 (attendance_count={daily_count}일차, daily_record_count={daily_record_count}회)")
 
     # 일일 기록 DB 저장 (같은 날짜 있으면 최신 내용으로 업데이트)
+    from datetime import datetime
+    today = datetime.now().date().isoformat()
+
     await db.save_daily_record(
         user_id=user_id,
         summary_content=summary_text
     )
-    logger.info(f"[DailyAgent] 일일기록 DB 저장 완료")
+    logger.info(f"[DailySummary] 일일기록 DB 저장 완료 (record_date: {today})")
 
     return summary_text, daily_count

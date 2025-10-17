@@ -1,0 +1,408 @@
+# 3-Minute Career Chatbot - Cursor Rules
+
+## Project Overview
+- **Project Name**: 3-Minute Career Chatbot
+- **Tech Stack**: Python 3.11+, FastAPI, LangChain, LangGraph, OpenAI GPT-4o-mini, Supabase
+- **Architecture**: LangGraph-based workflow with State Machine pattern
+- **Purpose**: Career development chatbot that collects onboarding info, tracks daily work logs, and provides weekly feedback
+
+## Code Style & Conventions
+
+### Python Code Style
+- Follow PEP 8 strictly
+- Type hints are MANDATORY (use `typing` module)
+- Use Google-style docstrings
+- Maximum line length: 120 characters
+- Naming conventions:
+  - Functions/variables: `snake_case`
+  - Classes: `PascalCase`
+  - Constants: `UPPER_SNAKE_CASE`
+
+### Asynchronous Programming
+- ALL I/O operations MUST use `async/await`
+- DB queries and LLM calls MUST be asynchronous
+- NEVER use synchronous functions for I/O (causes performance degradation)
+
+### Logging
+- Use Python's `logging` module
+- Log levels: INFO (general), WARNING (caution), ERROR (error)
+- Log format: `[ComponentName] message content`
+- Example: `logger.info(f"[RouterNode] user_id={user_id}")`
+
+## Architecture Rules
+
+### 1. LangGraph Workflow
+- **Node Structure**: All nodes defined in `src/chatbot/nodes.py`
+- **State Management**: Use `OverallState` from `src/chatbot/state.py`
+- **Graph Building**: Entire workflow constructed in `src/chatbot/workflow.py`
+- **Node Naming**: `{feature}_node` (e.g., `router_node`, `onboarding_agent_node`)
+
+### 2. Workflow Structure
+```
+User Message Input
+    ↓
+router_node (check onboarding completion)
+    ↓
+Onboarding incomplete → onboarding_agent_node
+    ↓
+Onboarding complete → service_router_node (intent classification)
+    ↓
+Daily record → daily_agent_node
+Weekly feedback → weekly_agent_node
+    ↓
+Return response
+```
+
+### 3. Directory Structure
+```
+src/
+├── chatbot/          # LangGraph workflow (core logic)
+│   ├── nodes.py      # All node definitions
+│   ├── state.py      # State definitions (TypedDict, Pydantic)
+│   ├── workflow.py   # Graph building
+│   ├── graph_manager.py  # User-specific graph management
+│   └── memory_manager.py # Conversation memory management
+├── service/          # Business logic (LLM call services)
+│   ├── intent_classifier.py
+│   ├── summary_generator.py
+│   └── weekly_feedback_generator.py
+├── prompt/           # Prompt templates
+├── utils/            # Utilities (models.py, utils.py)
+├── config/           # Configuration (config.py)
+└── database.py       # DB layer (Supabase)
+```
+
+### 4. Layer Separation Principles
+- **API Layer** (`main.py`): Endpoint definitions, request/response handling
+- **Business Logic** (`chatbot/`, `service/`): Workflow, LLM calls
+- **Data Layer** (`database.py`): DB queries only
+- **STRICTLY FORBIDDEN**: Direct DB calls from API layer (MUST go through `ChatBotManager`)
+
+## LLM Usage Rules
+
+### 1. Model Configuration
+- **Provider**: OpenAI
+- **Current Model**: gpt-4o-mini (all purposes)
+- **Model Changes**: Only modify in `src/config/config.py`
+- **Model Instance Creation**: Use `*_MODEL_CONFIG` from `src/utils/models.py`
+
+### 2. LLM Call Pattern
+```python
+# ✅ CORRECT PATTERN
+from langchain_openai import ChatOpenAI
+from ..utils.models import CHAT_MODEL_CONFIG
+import os
+
+llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+response = await llm.ainvoke([
+    SystemMessage(content=system_prompt),
+    HumanMessage(content=user_message)
+])
+
+# ❌ WRONG PATTERN (hardcoded configuration)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
+```
+
+### 3. Structured Output
+- Onboarding node: Use `OnboardingResponse` Pydantic model
+- Use `.with_structured_output(OnboardingResponse)` pattern
+- Automated field extraction (name, job_title, career_goal, etc.)
+
+### 4. Model Usage by Purpose
+- **Onboarding**: Structured output for info extraction + conversation generation
+- **Daily Record**: Natural question generation
+- **Summary Generation**: Conversation summarization (daily/weekly)
+- **Intent Classification**: User intent detection (summary/continue/restart/rejection)
+
+## Database Rules
+
+### 1. Supabase Tables
+- `users`: User information (onboarding data)
+  - 9 required fields: name, job_title, total_years, job_years, career_goal, project_name, recent_work, job_meaning, important_thing
+- `conversations`: Conversation history
+- `conversation_summaries`: Conversation summaries (short-term memory)
+- `conversation_states`: Session state (temp_data)
+  - Stores field_attempts, field_status, daily_session_data, etc.
+- `daily_records`: Daily records (work_content, record_date)
+- `weekly_summaries`: Weekly summaries (sequence_number, start/end_daily_count)
+
+### 2. DB Access Rules
+- **ALL DB queries MUST be defined in `database.py`**
+- NEVER call Supabase client directly
+- NULL value handling: Use `.get()` method with default values
+
+### 3. Transaction Management
+- Use `upsert` (prevent duplicates)
+- Implement rollback logic on failure
+- Store `conversation_states.temp_data` in JSON format
+
+## State Management
+
+### 1. OverallState Structure
+```python
+class OverallState(TypedDict):
+    user_id: str                          # User ID
+    message: str                          # Current message
+    user_context: Optional[UserContext]   # User context (includes metadata)
+    user_intent: Optional[str]            # Intent (daily_record, weekly_feedback, etc.)
+    ai_response: str                      # AI response
+    conversation_history: List[Dict]      # Conversation history
+    conversation_summary: str             # Conversation summary
+    action_hint: Optional[str]            # KakaoTalk button hint
+```
+
+### 2. UserContext Structure
+```python
+class UserContext(BaseModel):
+    user_id: str
+    onboarding_stage: OnboardingStage     # NOT_STARTED, COLLECTING_BASIC, COMPLETED
+    metadata: UserMetadata                # 9 required fields
+    daily_record_count: int               # Daily record count
+    last_record_date: Optional[str]       # Last record date
+    daily_session_data: Dict              # Session data (conversation_count, etc.)
+```
+
+### 3. State Transition Rules
+- `router_node`: Load user_context from DB, check onboarding completion
+- `onboarding_agent_node`: Update metadata → Save to DB → Store temp_data in conversation_states
+- `daily_agent_node`: Increment conversation_count → Suggest summary after 5+ conversations
+- `weekly_agent_node`: Generate weekly summary on day 7 → Save to DB → Reset daily_record_count
+
+## Prompt Writing Rules
+
+### 1. Prompt File Location
+- Separate by module in `src/prompt/` directory
+- File naming: `{feature}_prompt.py` (e.g., `onboarding.py`, `daily_record_prompt.py`)
+
+### 2. Prompt Naming
+- System prompt: `{FEATURE}_SYSTEM_PROMPT`
+- User prompt: `{FEATURE}_USER_PROMPT`
+- Template variables: `{variable_name}` format
+
+### 3. Prompt Structure
+```python
+SYSTEM_PROMPT = """
+# Role Definition
+You are [role].
+
+# Objective
+[Specific objective]
+
+# Constraints
+- [Constraint 1]
+- [Constraint 2]
+
+# Output Format
+[Specify JSON/text format]
+"""
+
+USER_PROMPT = """
+[Context Information]
+{context_variable}
+
+[Request]
+{user_message}
+"""
+```
+
+### 4. Onboarding Prompt Features
+- Use Structured Output (`OnboardingResponse`)
+- Store insufficient answers after 3 attempts with `[INSUFFICIENT]` tag
+- Manage field_status: confirmed/skipped/insufficient
+- Don't increment attempt count for clarification requests (is_clarification_request)
+
+## Memory Management
+
+### 1. Short-term Memory Strategy
+- **Summary threshold**: Generate summary after 10+ messages
+- **Recent messages**: Keep only 3 recent messages in original form
+- **Summary update**: Integrate new messages with existing summary
+
+### 2. Conversation History Management
+- Permanently store in `conversations` table
+- Store summaries in `conversation_summaries` table
+- Reset conversation history after onboarding completion (clean state for daily recording)
+
+### 3. Session Data Management
+- Store temporary data in `conversation_states.temp_data`
+- field_attempts, field_status: For onboarding tracking
+- daily_session_data: For daily record session tracking (conversation_count)
+- weekly_summary_ready: Day 7 achievement flag
+
+## Error Handling
+
+### 1. Exception Handling
+- ALL nodes MUST have `try-except` blocks
+- Return fallback response on exception
+- Log stack traces with `traceback.print_exc()`
+
+### 2. User Responses
+- Return friendly messages on errors
+- NEVER expose technical terms
+- Example: "We're sorry. A temporary error has occurred."
+
+### 3. Preventing Onboarding Failure Patterns
+- Auto-reset if conversation history exceeds 10 messages
+- Skip or mark as insufficient after 3 failed attempts
+
+## Testing
+
+### 1. Local Testing
+- Use `/api/chat` endpoint
+- Use user_id format: `test_user_{id}` (test flag)
+
+### 2. KakaoTalk Webhook Testing
+- Use `/webhook` endpoint
+- Utilize action_hint (onboarding, daily_record, service_feedback)
+
+### 3. Debugging
+- Use LangSmith tracing (`@traceable` decorator)
+- Check input/output logs for each node
+- Use `logger.info()` for logging
+
+## Environment Variables
+
+### Required Environment Variables (.env)
+```bash
+# Supabase
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+
+# OpenAI
+OPENAI_API_KEY=
+
+# Server
+PORT=8000
+
+# LangSmith (optional)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=
+LANGCHAIN_PROJECT=
+```
+
+## Commit Message Rules
+
+### Commit Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `refactor`: Refactoring
+- `docs`: Documentation
+- `test`: Test addition/modification
+- `chore`: Build, configuration changes
+
+### Format
+```
+{type}: {brief description}
+
+{detailed description (optional)}
+```
+
+Example:
+```
+feat: add 3-attempt limit for onboarding
+
+- Track attempt count per field
+- Store with [INSUFFICIENT] tag after 3 failures
+- Save field_status in conversation_states.temp_data
+```
+
+## Collaboration Guidelines
+
+### 1. Branch Strategy
+- `main`: Production deployment branch (stable)
+- `feat/*`: Feature development branches
+- `fix/*`: Bug fix branches
+- PR required, merge after code review
+
+### 2. Code Review Points
+- Check for missing type hints
+- Verify async function usage
+- Assess error handling appropriateness
+- Evaluate prompt quality (clarity, specificity)
+- Verify state transition logic accuracy
+
+### 3. Performance Considerations
+- Minimize DB queries (use caching)
+- Reduce LLM call frequency
+- Set conversation history limits (prevent infinite growth)
+- Leverage graph caching (GraphManager's caching)
+
+## Key Flows
+
+### 1. Onboarding Flow
+1. New user enters → router_node detects
+2. Route to onboarding_agent_node
+3. Sequential collection of 9 fields (FIELD_ORDER defined)
+4. 3-attempt limit per field
+5. Congratulation message + conversation history reset upon completion
+
+### 2. Daily Record Flow
+1. Onboarded user → service_router_node
+2. Intent classification: daily_record → daily_agent_node
+3. Conversation progress (conversation_count increment)
+4. Suggest summary after 5+ conversations
+5. Generate summary → Increment daily_record_count → Save to DB
+6. Suggest weekly summary upon reaching day 7
+
+### 3. Weekly Feedback Flow
+1. Set weekly_summary_ready flag on day 7
+2. Execute weekly_agent_node on user acceptance
+3. Query recent 7 daily records
+4. Generate weekly feedback → Save to weekly_summaries table
+5. Reset daily_record_count (start new week)
+
+## AI Assistant Usage Guidelines
+
+### When Requesting Code Generation
+- Specify concrete requirements
+- Share prompt content to be used
+- Provide expected input/output examples
+- Mention workflow.py update when adding nodes
+
+### When Requesting Refactoring
+- Clearly explain current problems
+- Suggest improvement direction
+- Specify whether to preserve existing logic
+- Carefully review state transition logic changes
+
+### When Requesting Bug Fixes
+- Share complete error logs
+- Explain reproduction steps
+- Share suspected cause (if any)
+- Share LangSmith trace URL (if available)
+
+## Prohibited Actions
+
+1. **NEVER use synchronous functions** (all I/O must use async/await)
+2. **NEVER call DB directly from API layer** (go through ChatBotManager)
+3. **NEVER hardcode** (manage model names and prompts in separate files)
+4. **PREVENT infinite loops** (limit conversation history and attempt counts)
+5. **NEVER log sensitive information** (API keys, user personal information)
+
+## Important Implementation Notes
+
+### Onboarding Field Collection
+- **Field Order**: name → job_title → total_years → job_years → career_goal → project_name → recent_work → job_meaning → important_thing
+- **Attempt Tracking**: Store in `conversation_states.temp_data.field_attempts`
+- **Field Status**: confirmed/skipped/insufficient
+- **3-Attempt Rule**: After 3 attempts, if field is still null:
+  - If user provided meaningful answer: Store as `[INSUFFICIENT] {answer}`
+  - If user explicitly skipped: Mark as "skipped"
+
+### Daily Record Session Management
+- **Conversation Count**: Track in `daily_session_data.conversation_count`
+- **Summary Trigger**: Suggest summary after 5+ conversations
+- **Session Reset**: Clear `daily_session_data` after summary generation
+
+### Weekly Summary Generation
+- **Trigger**: Automatically suggest after 7th daily record
+- **Flag**: `weekly_summary_ready` in `conversation_states.temp_data`
+- **Data Source**: Query last 7 records from `daily_records` table
+- **Post-Generation**: Reset `daily_record_count` to 0 for new week
+
+## Reference Documentation
+
+- LangGraph Official Docs: https://langchain-ai.github.io/langgraph/
+- LangChain Official Docs: https://python.langchain.com/
+- FastAPI Official Docs: https://fastapi.tiangolo.com/
+- Supabase Official Docs: https://supabase.com/docs
