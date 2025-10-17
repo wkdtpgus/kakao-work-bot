@@ -90,6 +90,11 @@ class OverallState(TypedDict):
     conversation_summary: str
     action_hint: Optional[str]  # 카카오톡 버튼 힌트 ("onboarding", "daily_record", "service_feedback")
 
+    # DB 쿼리 캐시 (한 요청 내에서 재사용)
+    cached_user: Optional[Dict[str, Any]]  # UserSchema from get_user_with_context
+    cached_conv_state: Optional[Dict[str, Any]]  # ConversationStateSchema
+    cached_today_conversations: Optional[List[Dict[str, Any]]]  # 오늘 대화 목록
+
 
 @dataclass
 class ConversationState:

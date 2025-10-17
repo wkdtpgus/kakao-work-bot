@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
     job_meaning TEXT,
     important_thing TEXT,
 
+    -- 온보딩 완료 여부
+    onboarding_completed BOOLEAN DEFAULT FALSE,
+
     -- 카운터
     attendance_count INTEGER DEFAULT 0,
     daily_record_count INTEGER DEFAULT 0,
