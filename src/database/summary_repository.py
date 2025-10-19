@@ -1,100 +1,221 @@
-"""요약 관련 복합 DB 로직"""
-from typing import Optional
+"""요약 관련 복합 DB 로직 (V2 스키마)"""
+from typing import Optional, Tuple
 from datetime import datetime
-from .schemas import DailyRecordSchema, WeeklySummarySchema
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-async def save_daily_summary_with_checks(
+# =============================================================================
+# V2 스키마 - 요약 저장 헬퍼 함수
+# =============================================================================
+
+async def save_daily_summary_v2(
     db,
     user_id: str,
-    summary_content: str,
-    user_dict: dict,
-    attendance_count: int
-) -> tuple[bool, Optional[int]]:
-    """일일 요약 저장 및 7일차 체크
+    user_message: str,
+    summary_content: str
+) -> bool:
+    """일일 요약 저장 (V2 스키마)
+
+    ai_answer_messages 테이블에 is_summary=TRUE, summary_type='daily'로 저장
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
+        user_message: 사용자 메시지 (요약 요청 메시지)
         summary_content: 일일 요약 내용
-        user_dict: 사용자 정보 딕셔너리 (UserSchema 변환 전)
-        attendance_count: 현재 attendance_count
 
     Returns:
-        (is_7th_day, daily_record_count): 7일차 여부와 현재 daily_record_count
+        bool: 저장 성공 여부
     """
-    # 일일 요약 저장
-    today = datetime.now().date().isoformat()
-    await db.save_daily_record(user_id, summary_content, record_date=today)
+    try:
+        result = await db.save_conversation_turn(
+            user_id=user_id,
+            user_message=user_message,
+            ai_message=summary_content,
+            is_summary=True,
+            summary_type='daily'
+        )
 
-    # 7일차 체크 (attendance_count % 7 == 0 AND daily_record_count >= 5)
-    daily_record_count = user_dict.get("daily_record_count", 0)
-    is_7th_day = (attendance_count > 0 and
-                  attendance_count % 7 == 0 and
-                  daily_record_count >= 5)
+        if result:
+            logger.info(f"[SummaryRepoV2] 일일 요약 저장 완료: {user_id}")
+            return True
+        else:
+            logger.error(f"[SummaryRepoV2] 일일 요약 저장 실패: {user_id}")
+            return False
 
-    logger.info(
-        f"[SummaryRepo] 일일 요약 저장 완료 - "
-        f"7일차 여부: {is_7th_day} (attendance={attendance_count}, daily={daily_record_count})"
-    )
-
-    return is_7th_day, daily_record_count
+    except Exception as e:
+        logger.error(f"[SummaryRepoV2] 일일 요약 저장 중 오류: {e}")
+        return False
 
 
-async def save_weekly_summary_with_metadata(
+async def save_weekly_summary_v2(
     db,
     user_id: str,
-    summary_content: str,
-    attendance_count: int
-) -> int:
-    """주간 요약 저장 (시퀀스 자동 계산)
+    user_message: str,
+    summary_content: str
+) -> bool:
+    """주간 요약 저장 (V2 스키마)
+
+    ai_answer_messages 테이블에 is_summary=TRUE, summary_type='weekly'로 저장
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
+        user_message: 사용자 메시지 (요약 요청 메시지)
         summary_content: 주간 요약 내용
-        attendance_count: 현재 attendance_count
 
     Returns:
-        int: 저장된 시퀀스 번호
+        bool: 저장 성공 여부
     """
-    sequence_number = attendance_count // 7
-    start_attendance_count = (sequence_number - 1) * 7 + 1
-    end_attendance_count = sequence_number * 7
-    current_date = datetime.now().date().isoformat()
+    try:
+        result = await db.save_conversation_turn(
+            user_id=user_id,
+            user_message=user_message,
+            ai_message=summary_content,
+            is_summary=True,
+            summary_type='weekly'
+        )
 
-    await db.save_weekly_summary(
-        user_id=user_id,
-        sequence_number=sequence_number,
-        start_daily_count=start_attendance_count,
-        end_daily_count=end_attendance_count,
-        summary_content=summary_content,
-        start_date=None,  # TODO: 일일기록 날짜 추적 추가 후 계산
-        end_date=current_date
-    )
+        if result:
+            logger.info(f"[SummaryRepoV2] 주간 요약 저장 완료: {user_id}")
+            return True
+        else:
+            logger.error(f"[SummaryRepoV2] 주간 요약 저장 실패: {user_id}")
+            return False
 
-    logger.info(
-        f"[SummaryRepo] 주간요약 저장 완료: "
-        f"{sequence_number}번째 ({start_attendance_count}-{end_attendance_count}일차)"
-    )
-
-    return sequence_number
+    except Exception as e:
+        logger.error(f"[SummaryRepoV2] 주간 요약 저장 중 오류: {e}")
+        return False
 
 
-async def get_weekly_summary_data(db, user_id: str, limit: int = 7) -> list:
-    """주간 요약 생성을 위한 일일 기록 조회
+# =============================================================================
+# V2 스키마 - 요약 조회 헬퍼 함수
+# =============================================================================
+
+async def get_daily_summaries_for_weekly_v2(
+    db,
+    user_id: str,
+    limit: int = 7
+) -> list:
+    """주간 요약 생성을 위한 일일 요약 조회 (V2 스키마)
+
+    하루에 여러 데일리 요약이 있는 경우, 각 날짜별 최신 요약만 반환합니다.
+    RPC 함수 get_recent_daily_summaries_by_unique_dates() 사용
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
-        limit: 조회할 기록 수 (기본 7개)
+        limit: 조회할 고유 날짜 수 (기본 7개)
 
     Returns:
-        list: 일일 기록 목록
+        list: [
+            {
+                "summary_content": "오늘의 요약...",
+                "session_date": "2025-10-19",
+                "created_at": "...",
+                ...
+            },
+            ...
+        ]
     """
-    records = await db.get_daily_records(user_id, limit=limit)
-    logger.info(f"[SummaryRepo] 주간 요약용 일일 기록 조회: {len(records)}개")
-    return records
+    try:
+        summaries = await db.get_daily_summaries_v2(user_id, limit=limit)
+        logger.info(f"[SummaryRepoV2] 주간 요약용 일일 요약 조회: {len(summaries)}개")
+        return summaries
+
+    except Exception as e:
+        logger.error(f"[SummaryRepoV2] 일일 요약 조회 중 오류: {e}")
+        return []
+
+
+async def get_all_summaries_v2(
+    db,
+    user_id: str,
+    summary_type: Optional[str] = None,
+    limit: int = 10
+) -> list:
+    """모든 요약 조회 (V2 스키마)
+
+    summary_messages_view를 통해 요약 조회
+
+    Args:
+        db: Database 인스턴스
+        user_id: 카카오 사용자 ID
+        summary_type: 요약 타입 ('daily', 'weekly', None이면 전체)
+        limit: 조회할 요약 개수
+
+    Returns:
+        list: 요약 목록
+    """
+    try:
+        if not db.supabase:
+            return []
+
+        query = db.supabase.table("summary_messages_view") \
+            .select("*") \
+            .eq("kakao_user_id", user_id)
+
+        if summary_type:
+            query = query.eq("summary_type", summary_type)
+
+        response = query.order("created_at", desc=True) \
+            .limit(limit) \
+            .execute()
+
+        summaries = response.data if response.data else []
+        logger.info(
+            f"[SummaryRepoV2] 요약 조회 완료: {user_id} "
+            f"(type={summary_type or 'all'}, count={len(summaries)})"
+        )
+        return summaries
+
+    except Exception as e:
+        logger.error(f"[SummaryRepoV2] 요약 조회 중 오류: {e}")
+        return []
+
+
+# =============================================================================
+# V2 스키마 - 7일차 체크 로직
+# =============================================================================
+
+async def check_weekly_summary_ready(
+    db,
+    user_id: str,
+    attendance_count: int
+) -> Tuple[bool, int]:
+    """주간 요약 생성 준비 여부 체크 (V2 스키마)
+
+    attendance_count가 7의 배수이고, 실제 일일 요약이 5개 이상인지 확인
+
+    Args:
+        db: Database 인스턴스
+        user_id: 카카오 사용자 ID
+        attendance_count: 현재 출석 카운트
+
+    Returns:
+        (is_ready, daily_summary_count): 준비 여부와 일일 요약 개수
+    """
+    try:
+        # 7의 배수가 아니면 준비 안 됨
+        if attendance_count == 0 or attendance_count % 7 != 0:
+            return False, 0
+
+        # 최근 7개 일일 요약 조회
+        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=7)
+        daily_count = len(daily_summaries)
+
+        # 5개 이상이어야 주간 요약 생성
+        is_ready = daily_count >= 5
+
+        logger.info(
+            f"[SummaryRepoV2] 주간 요약 준비 체크: "
+            f"attendance={attendance_count}, daily_count={daily_count}, ready={is_ready}"
+        )
+
+        return is_ready, daily_count
+
+    except Exception as e:
+        logger.error(f"[SummaryRepoV2] 주간 요약 준비 체크 중 오류: {e}")
+        return False, 0

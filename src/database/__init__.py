@@ -6,10 +6,10 @@ from .database import Database
 from .schemas import (
     UserSchema,
     ConversationStateSchema,
-    ConversationMessageSchema,
-    AIConversationSchema,
-    DailyRecordSchema,
-    WeeklySummarySchema
+    # V2 스키마
+    UserMessageSchema,
+    AIMessageSchema,
+    MessageTurnSchema
 )
 
 # User Repository
@@ -18,8 +18,7 @@ from .user_repository import (
     check_and_reset_daily_count,
     increment_counts_with_check,
     save_onboarding_metadata,
-    complete_onboarding,
-    get_onboarding_history
+    complete_onboarding
 )
 
 # Conversation Repository
@@ -32,11 +31,13 @@ from .conversation_repository import (
     handle_rejection_flag
 )
 
-# Summary Repository
+# Summary Repository (V2 스키마)
 from .summary_repository import (
-    save_daily_summary_with_checks,
-    save_weekly_summary_with_metadata,
-    get_weekly_summary_data
+    save_daily_summary_v2,
+    save_weekly_summary_v2,
+    get_daily_summaries_for_weekly_v2,
+    get_all_summaries_v2,
+    check_weekly_summary_ready
 )
 
 __all__ = [
@@ -46,10 +47,10 @@ __all__ = [
     # Schemas
     "UserSchema",
     "ConversationStateSchema",
-    "ConversationMessageSchema",
-    "AIConversationSchema",
-    "DailyRecordSchema",
-    "WeeklySummarySchema",
+    # V2 스키마
+    "UserMessageSchema",
+    "AIMessageSchema",
+    "MessageTurnSchema",
 
     # User Repository
     "get_user_with_context",
@@ -57,7 +58,6 @@ __all__ = [
     "increment_counts_with_check",
     "save_onboarding_metadata",
     "complete_onboarding",
-    "get_onboarding_history",
 
     # Conversation Repository
     "get_today_conversations",
@@ -67,8 +67,10 @@ __all__ = [
     "update_daily_session_data",
     "handle_rejection_flag",
 
-    # Summary Repository
-    "save_daily_summary_with_checks",
-    "save_weekly_summary_with_metadata",
-    "get_weekly_summary_data",
+    # Summary Repository (V2)
+    "save_daily_summary_v2",
+    "save_weekly_summary_v2",
+    "get_daily_summaries_for_weekly_v2",
+    "get_all_summaries_v2",
+    "check_weekly_summary_ready",
 ]

@@ -17,7 +17,6 @@ from langsmith import traceable
 # Database repository functions
 from ..database import (
     get_user_with_context,
-    get_onboarding_history,
     save_onboarding_metadata,
     complete_onboarding,
     check_and_reset_daily_count,
@@ -50,6 +49,10 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
         # conversation_state 조회 (캐싱용)
         conv_state = await db.get_conversation_state(user_id)
 
+        # 오늘 대화 히스토리 조회 (캐싱용 - service_router와 daily_agent에서 재사용)
+        today = datetime.now().date().isoformat()
+        today_turns = await db.get_conversation_history_by_date_v2(user_id, today, limit=50)
+
         logger.info(f"[RouterNode] onboarding_complete={user_context.onboarding_stage == OnboardingStage.COMPLETED}, user_id={user_id}")
 
         # 온보딩 완료 여부에 따라 라우팅 + 캐싱
@@ -59,6 +62,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
                     "user_context": user_context,
                     "cached_user": user.dict() if user else None,  # UserSchema → dict
                     "cached_conv_state": conv_state,
+                    "cached_today_turns": today_turns,  # 오늘 대화 히스토리 캐싱
                 },
                 goto="service_router_node"
             )
@@ -86,7 +90,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 # =============================================================================
 
 @traceable(name="service_router_node")
-async def service_router_node(state: OverallState, llm, db, memory_manager) -> Command[Literal["daily_agent_node", "weekly_agent_node", "__end__"]]:
+async def service_router_node(state: OverallState, llm, db) -> Command[Literal["daily_agent_node", "weekly_agent_node", "__end__"]]:
     """사용자 의도 파악: 일일 기록 vs 주간 피드백 (캐시 활용)
 
     일일 기록으로 라우팅하는 경우 세부 의도(summary/edit_summary/rejection/continue)도 분류하여 전달
@@ -97,12 +101,24 @@ async def service_router_node(state: OverallState, llm, db, memory_manager) -> C
 
     # 캐시된 데이터 사용
     cached_conv_state = state.get("cached_conv_state")
+    cached_today_turns = state.get("cached_today_turns", [])
 
     logger.info(f"[ServiceRouter] message={message[:50]}")
 
     try:
+        # 직전 봇 메시지 추출 (맥락 파악용)
+        last_bot_message = None
+        if cached_today_turns:
+            for turn in reversed(cached_today_turns):
+                if turn["role"] == "assistant":
+                    last_bot_message = turn["content"]
+                    break
+
+        # 의도 분류 시 직전 봇 메시지 포함
+        enhanced_message = f"[Previous bot]: {last_bot_message}\n[User]: {message}" if last_bot_message else message
+
         # LLM으로 의도 분류 (온보딩 재시작 요청도 LLM이 처리)
-        user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=message)
+        user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=enhanced_message)
 
         response = await llm.ainvoke([
             SystemMessage(content=SERVICE_ROUTER_SYSTEM_PROMPT),
@@ -147,7 +163,8 @@ async def service_router_node(state: OverallState, llm, db, memory_manager) -> C
             logger.info(f"[ServiceRouter] Intent: daily_record → daily_agent_node")
             # 일일 기록 세부 의도 분류 (summary/edit_summary/rejection/continue/restart)
             from ..service import classify_user_intent
-            detailed_intent = await classify_user_intent(message, llm, user_context, db)
+            # enhanced_message를 그대로 전달 (직전 봇 메시지 포함)
+            detailed_intent = await classify_user_intent(enhanced_message, llm, user_context, db)
             logger.info(f"[ServiceRouter] 세부 의도 분류: {detailed_intent}")
             return Command(
                 update={
@@ -168,7 +185,7 @@ async def service_router_node(state: OverallState, llm, db, memory_manager) -> C
 # =============================================================================
 
 @traceable(name="onboarding_agent_node")
-async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) -> Command[Literal["__end__"]]:
+async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal["__end__"]]:
     """온보딩 대화 + 정보 추출 + DB 저장 (Repository 함수 활용)"""
     user_id = state["user_id"]
     message = state["message"]
@@ -178,10 +195,16 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 
     try:
         # ========================================
-        # 1. 초기 데이터 로드 (Repository 함수 활용)
+        # 1. 초기 데이터 로드
         # ========================================
-        # Repository 함수로 온보딩 히스토리 조회 (10개 넘으면 자동 초기화)
-        total_messages, recent_messages = await get_onboarding_history(db, user_id)
+        # 온보딩 대화 히스토리 로드 (temp_data에서, 최근 3턴 = 6개 메시지)
+        conv_state = await db.get_conversation_state(user_id)
+        recent_messages = []
+
+        if conv_state and conv_state.get("temp_data"):
+            # temp_data에 저장된 온보딩 메시지 (최근 3턴)
+            recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]
+            logger.info(f"[OnboardingAgent] 온보딩 히스토리 로드: {len(recent_messages)}개 ({len(recent_messages)//2}턴)")
 
         # 프롬프트 구성
         current_metadata = user_context.metadata if user_context.metadata else UserMetadata()
@@ -275,6 +298,22 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 
         print(f"✅ [OnboardingAgent] 메타데이터 저장 완료 (Repository 함수)")
 
+        # 온보딩 대화 히스토리 업데이트 (최근 3턴만 유지)
+        onboarding_messages = recent_messages.copy()
+        onboarding_messages.append({"role": "user", "content": message})
+        onboarding_messages.append({"role": "assistant", "content": ai_response})
+
+        # 최근 3턴(6개 메시지)만 유지
+        onboarding_messages = onboarding_messages[-6:]
+
+        # temp_data 업데이트
+        conv_state_updated = await db.get_conversation_state(user_id)
+        temp_data = conv_state_updated.get("temp_data", {}) if conv_state_updated else {}
+        temp_data["onboarding_messages"] = onboarding_messages
+
+        await db.upsert_conversation_state(user_id, current_step="onboarding", temp_data=temp_data)
+        logger.info(f"[OnboardingAgent] 대화 히스토리 저장: {len(onboarding_messages)//2}턴")
+
         # 온보딩 완료 체크 (skipped/insufficient 모두 완료로 간주)
         REQUIRED_FIELDS = ["name", "job_title", "total_years", "job_years", "career_goal",
                           "project_name", "recent_work", "job_meaning", "important_thing"]
@@ -319,14 +358,9 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
             logger.info(f"[OnboardingAgent] 온보딩 완료! user={user_id}")
 
         # 온보딩 완료 시 대화 히스토리 초기화 (일일기록은 깨끗한 상태로 시작)
-        if is_onboarding_complete and not was_already_complete:
-            await db.delete_conversations(user_id)
-            logger.info(f"[OnboardingAgent] 온보딩 대화 히스토리 초기화 완료 (완료 메시지는 저장 안 함)")
-        else:
-            # 온보딩 진행 중인 경우만 대화 저장
-            await memory_manager.add_messages(user_id, message, ai_response, db)
-
-        logger.info(f"[OnboardingAgent] 응답: {ai_response[:50]}...")
+        # 온보딩 중에는 대화 턴을 저장하지 않음
+        # (완료 후 complete_onboarding()에서 자동 삭제되므로 불필요)
+        logger.info(f"[OnboardingAgent] 응답: {ai_response[:50]}... (대화 턴 저장 스킵)")
 
         return Command(update={"ai_response": ai_response}, goto="__end__")
 
@@ -336,7 +370,7 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
         traceback.print_exc()
 
         fallback_response = "죄송합니다. 오류가 발생했습니다."
-        await memory_manager.add_messages(user_id, message, fallback_response, db)
+        # 온보딩 중에는 대화 턴 저장하지 않음
 
         return Command(update={"ai_response": fallback_response}, goto="__end__")
 
@@ -346,7 +380,7 @@ async def onboarding_agent_node(state: OverallState, db, memory_manager, llm) ->
 # =============================================================================
 
 @traceable(name="daily_agent_node")
-async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[Literal["__end__", "weekly_agent_node"]]:
+async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__", "weekly_agent_node"]]:
     """일일 기록 대화 (대화 횟수 기반, 5회 이상 시 요약 제안) - 캐시 활용"""
 
     user_id = state["user_id"]
@@ -356,6 +390,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
     # 캐시된 데이터 사용
     cached_user = state.get("cached_user")
     cached_conv_state = state.get("cached_conv_state")
+    cached_today_turns = state.get("cached_today_turns")
 
     logger.info(f"[DailyAgent] user_id={user_id}, message={message[:50]}")
 
@@ -365,9 +400,15 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         # ========================================
         today = datetime.now().date().isoformat()
 
-        # user와 conv_state는 캐시 사용, today_turns만 새로 조회
-        # Repository 함수로 한 번에 조회 가능
-        today_turns, conv_state = await get_today_conversations(db, user_id)
+        # cached_today_turns가 있으면 사용, 없으면 조회 (fallback)
+        if cached_today_turns is not None:
+            today_turns = cached_today_turns
+            conv_state = cached_conv_state
+            logger.info(f"[DailyAgent] 캐시된 today_turns 사용 ({len(today_turns)}개)")
+        else:
+            # Repository 함수로 한 번에 조회 (fallback)
+            today_turns, conv_state = await get_today_conversations(db, user_id)
+            logger.info(f"[DailyAgent] today_turns DB 조회 ({len(today_turns)}개)")
 
         # cached_user가 없으면 조회 (fallback)
         if not cached_user:
@@ -396,6 +437,10 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         # 현재 세션의 대화 횟수 계산 (user + bot 쌍 = 1회)
         current_session_count = user_context.daily_session_data.get("conversation_count", 0)
         logger.info(f"[DailyAgent] 현재 대화 횟수: {current_session_count}")
+
+        # 요약 여부 추적 (공통 저장 로직용)
+        is_summary_response = False
+        summary_type_value = None
 
         # ========================================
         # 사용자 의도 분류: 요약 요청 vs 거절 vs 재시작 vs 일반 대화
@@ -446,7 +491,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
                 logger.info(f"[DailyAgent] 🎉 7일차 달성! (수정된 요약, attendance={current_attendance_count}, daily={current_daily_count})")
                 ai_response_with_suggestion = f"{ai_response}\n\n🎉 **7일차 달성!** 주간 요약도 보여드릴까요?"
 
-                await memory_manager.add_messages(user_id, message, ai_response_with_suggestion, db)
+                await db.save_conversation_turn(user_id, message, ai_response_with_suggestion, is_summary=True, summary_type='daily')
 
                 # Repository 함수로 주간 요약 플래그 설정
                 await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
@@ -467,6 +512,10 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
                 user_id, metadata, {"recent_turns": today_turns}, llm, db
             )
 
+            # 요약 플래그 설정
+            is_summary_response = True
+            summary_type_value = 'daily'
+
             # last_summary_at 플래그 저장 + conversation_count 리셋 (다음 5회 대화 후 다시 제안 가능)
             user_context.daily_session_data["last_summary_at"] = datetime.now().isoformat()
             user_context.daily_session_data["conversation_count"] = 0
@@ -482,7 +531,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
                 ai_response_with_suggestion = f"{ai_response}\n\n🎉 **7일차 달성!** 주간 요약도 보여드릴까요?"
 
                 # 대화 저장
-                await memory_manager.add_messages(user_id, message, ai_response_with_suggestion, db)
+                await db.save_conversation_turn(user_id, message, ai_response_with_suggestion, is_summary=True, summary_type='daily')
 
                 # Repository 함수로 주간 요약 플래그 설정
                 await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
@@ -524,12 +573,10 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
                 )
 
                 messages = [SystemMessage(content=system_prompt)]
-                # 오늘 대화 중 최근 5개만 사용 (맥락 유지)
+                # 오늘 대화 중 최근 5턴만 사용 (맥락 유지, V2 스키마)
                 for turn in today_turns[-5:]:
-                    if turn["role"] == "user":
-                        messages.append(HumanMessage(content=turn["content"]))
-                    else:
-                        messages.append(AIMessage(content=turn["content"]))
+                    messages.append(HumanMessage(content=turn["user_message"]))
+                    messages.append(AIMessage(content=turn["ai_message"]))
                 messages.append(HumanMessage(content=message))
 
                 response = await llm.ainvoke(messages)
@@ -542,7 +589,11 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         # ========================================
         # 공통: 대화 저장 + daily_record_count 증가 + attendance_count 체크 (Repository 함수)
         # ========================================
-        await memory_manager.add_messages(user_id, message, ai_response_final, db)
+        await db.save_conversation_turn(
+            user_id, message, ai_response_final,
+            is_summary=is_summary_response,
+            summary_type=summary_type_value if is_summary_response else None
+        )
 
         # Repository 함수로 카운트 증가 (daily_record_count + attendance_count 자동 처리)
         updated_daily_count, new_attendance = await increment_counts_with_check(db, user_id)
@@ -572,7 +623,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
         traceback.print_exc()
 
         fallback_response = "처리 중 오류가 발생했습니다. 다시 시도해주세요."
-        await memory_manager.add_messages(user_id, message, fallback_response, db)
+        await db.save_conversation_turn(user_id, message, fallback_response, is_summary=False)
 
         return Command(update={"ai_response": fallback_response}, goto="__end__")
 
@@ -582,7 +633,7 @@ async def daily_agent_node(state: OverallState, db, memory_manager) -> Command[L
 # =============================================================================
 
 @traceable(name="weekly_agent_node")
-async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[Literal["__end__"]]:
+async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__"]]:
     """주간 피드백 생성 및 DB 저장 (Repository 함수 활용)
 
     호출 경로:
@@ -607,13 +658,7 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
             logger.info(f"[WeeklyAgent] 7일차 주간요약 생성 (attendance_count={stored_attendance_count})")
 
             # 주간 피드백 생성
-            weekly_summary = await generate_weekly_feedback(user_id, db, memory_manager)
-
-            # Repository 함수로 주간 요약 저장
-            from ..database import save_weekly_summary_with_metadata
-            sequence_number = await save_weekly_summary_with_metadata(
-                db, user_id, weekly_summary, stored_attendance_count
-            )
+            weekly_summary = await generate_weekly_feedback(user_id, db)
 
             # Repository 함수로 플래그 정리
             await clear_weekly_summary_flag(db, user_id)
@@ -629,14 +674,14 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
                 current_count = cached_user.get("attendance_count", 0)
             else:
                 user = await db.get_user(user_id)
-                current_count = user.get("attendance_count", 0)
+                current_count = user.attendance_count if user else 0
 
             # 7일 미달 시 참고용 피드백 제공
             if current_count % 7 != 0:
                 logger.info(f"[WeeklyAgent] 7일 미달 (현재 {current_count}일차) → 참고용 피드백 제공")
 
                 # 임시 피드백 생성 (DB 저장 안 함)
-                partial_feedback = await generate_weekly_feedback(user_id, db, memory_manager)
+                partial_feedback = await generate_weekly_feedback(user_id, db)
 
                 ai_response = f"""아직 {current_count}일차예요. 7일차 달성 시 정식 주간요약이 생성되어 저장됩니다.
 
@@ -652,7 +697,7 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
                 ai_response = "해당 주간요약은 이미 확인하셨거나 확인 기간이 지났습니다. 다음 7일차에 새로운 주간요약을 확인하실 수 있어요."
 
         # 대화 저장
-        await memory_manager.add_messages(user_id, message, ai_response, db)
+        await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='weekly')
 
         logger.info(f"[WeeklyAgent] 주간 피드백 생성 완료: {ai_response[:50]}...")
 
@@ -664,6 +709,6 @@ async def weekly_agent_node(state: OverallState, db, memory_manager) -> Command[
         traceback.print_exc()
 
         fallback_response = "주간 피드백 생성 중 오류가 발생했습니다."
-        await memory_manager.add_messages(user_id, message, fallback_response, db)
+        await db.save_conversation_turn(user_id, message, fallback_response, is_summary=False)
 
         return Command(update={"ai_response": fallback_response}, goto="__end__")

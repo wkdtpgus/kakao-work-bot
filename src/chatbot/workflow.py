@@ -8,7 +8,7 @@ from .state import OverallState
 from . import nodes
 
 
-def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> StateGraph:
+def build_workflow_graph(db, onboarding_llm, service_llm) -> StateGraph:
     """멀티 스텝 워크플로우 그래프 구성
 
     Flow:
@@ -24,21 +24,21 @@ def build_workflow_graph(db, memory_manager, onboarding_llm, service_llm) -> Sta
     # StateGraph 생성
     workflow = StateGraph(OverallState)
 
-    # 노드 추가 (Agent Executor 제거, 단순 LLM 호출만 사용)
+    # 노드 추가 (memory_manager 제거, database 직접 사용)
     workflow.add_node("router_node",
                      partial(nodes.router_node, db=db))
 
     workflow.add_node("service_router_node",
-                     partial(nodes.service_router_node, llm=service_llm, db=db, memory_manager=memory_manager))
+                     partial(nodes.service_router_node, llm=service_llm, db=db))
 
     workflow.add_node("onboarding_agent_node",
-                     partial(nodes.onboarding_agent_node, db=db, memory_manager=memory_manager, llm=onboarding_llm))
+                     partial(nodes.onboarding_agent_node, db=db, llm=onboarding_llm))
 
     workflow.add_node("daily_agent_node",
-                     partial(nodes.daily_agent_node, db=db, memory_manager=memory_manager))
+                     partial(nodes.daily_agent_node, db=db))
 
     workflow.add_node("weekly_agent_node",
-                     partial(nodes.weekly_agent_node, db=db, memory_manager=memory_manager))
+                     partial(nodes.weekly_agent_node, db=db))
 
     # 시작점 설정
     workflow.set_entry_point("router_node")

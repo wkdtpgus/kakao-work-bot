@@ -19,25 +19,40 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema],
     """
     from ..chatbot.state import UserContext, UserMetadata, OnboardingStage
 
-    # 병렬 DB 쿼리
+    # 병렬 DB 쿼리 (V2 스키마)
     import asyncio
-    user_dict, conv_state, recent_messages = await asyncio.gather(
+    user, conv_state, recent_turns = await asyncio.gather(
         db.get_user(user_id),
         db.get_conversation_state(user_id),
-        db.get_conversation_history(user_id, limit=1)
+        db.get_recent_turns_v2(user_id, limit=1)
     )
 
-    # 신규 사용자
-    if not user_dict:
+    # 신규 사용자 (users 테이블에 레코드 없음)
+    if not user:
+        # conversation_states에서 온보딩 진행 상태 로드
+        metadata = UserMetadata()
+        onboarding_stage = OnboardingStage.NOT_STARTED
+
+        if conv_state and conv_state.get("temp_data"):
+            temp_data = conv_state["temp_data"]
+            metadata.field_attempts = temp_data.get("field_attempts", {})
+            metadata.field_status = temp_data.get("field_status", {})
+
+            # 온보딩이 진행 중이면 COLLECTING_BASIC으로 설정
+            if metadata.field_attempts or metadata.field_status:
+                onboarding_stage = OnboardingStage.COLLECTING_BASIC
+                logger.info(f"[UserRepo] 온보딩 진행 중 - attempts={metadata.field_attempts}")
+            else:
+                logger.info(f"[UserRepo] 온보딩 시작 전")
+
         user_context = UserContext(
             user_id=user_id,
-            onboarding_stage=OnboardingStage.NOT_STARTED,
-            metadata=UserMetadata()
+            onboarding_stage=onboarding_stage,
+            metadata=metadata
         )
         return None, user_context
 
-    # UserSchema 변환
-    user = UserSchema(**user_dict)
+    # user는 이미 UserSchema 객체
 
     # 기존 사용자 - 메타데이터 구성
     DATA_FIELDS = ["name", "job_title", "total_years", "job_years", "career_goal",
@@ -55,19 +70,20 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema],
         metadata.field_attempts = temp_data.get("field_attempts", {})
         metadata.field_status = temp_data.get("field_status", {})
 
-        # daily_session_data는 날짜 기반으로 리셋
+        # daily_session_data는 날짜 기반으로 리셋 (V2 스키마)
         today = datetime.now().date().isoformat()
 
-        if recent_messages and len(recent_messages) > 0:
-            last_message_date = recent_messages[0].get("created_at", "")[:10]
+        if recent_turns and len(recent_turns) > 0:
+            # V2: session_date 또는 created_at 사용
+            last_turn_date = recent_turns[0].get("session_date") or recent_turns[0].get("created_at", "")[:10]
 
-            if last_message_date == today:
+            if last_turn_date == today:
                 # 오늘 대화가 있으면 세션 유지
                 daily_session_data = temp_data.get("daily_session_data", {})
                 logger.info(f"[UserRepo] 세션 유지: conversation_count={daily_session_data.get('conversation_count', 0)}")
             else:
                 # 다른 날 대화면 세션 리셋
-                logger.info(f"[UserRepo] 세션 리셋: last={last_message_date}, today={today}")
+                logger.info(f"[UserRepo] 세션 리셋: last={last_turn_date}, today={today}")
         else:
             logger.info(f"[UserRepo] 세션 리셋 (대화 히스토리 없음)")
 
@@ -106,18 +122,16 @@ async def check_and_reset_daily_count(db, user_id: str) -> Tuple[int, bool]:
     Returns:
         (current_count, was_reset): 현재 카운트와 리셋 여부
     """
-    user_dict = await db.get_user(user_id)
+    user = await db.get_user(user_id)
 
-    if not user_dict:
+    if not user:
         return 0, False
-
-    user = UserSchema(**user_dict)
-    today = datetime.now().date().isoformat()
-    last_date = user.updated_at[:10] if user.updated_at else None
+    today = datetime.now().date()
+    last_record_date = user.last_record_date
 
     # 날짜가 바뀌었으면 리셋
-    if last_date and last_date != today:
-        logger.info(f"[UserRepo] 📅 날짜 변경 감지: {last_date} → {today}")
+    if last_record_date and last_record_date != today:
+        logger.info(f"[UserRepo] 📅 날짜 변경 감지: {last_record_date} → {today}")
         await db.create_or_update_user(user_id, {"daily_record_count": 0})
         return 0, True
 
@@ -141,9 +155,8 @@ async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[i
 
     # 5회가 되는 순간 attendance_count 증가
     if new_daily_count == 5:
-        user_dict = await db.get_user(user_id)
-        user = UserSchema(**user_dict)
-        current_attendance = user.attendance_count
+        user = await db.get_user(user_id)
+        current_attendance = user.attendance_count if user else 0
         new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
         logger.info(f"[UserRepo] 🎉 5회 달성! attendance: {current_attendance} → {new_attendance}일차")
         return new_daily_count, new_attendance
@@ -185,36 +198,98 @@ async def save_onboarding_metadata(db, user_id: str, metadata: "UserMetadata") -
 
 
 async def complete_onboarding(db, user_id: str) -> None:
-    """온보딩 완료 처리
+    """온보딩 완료 처리 및 온보딩 데이터 정리
+
+    온보딩이 완료되면:
+    1. onboarding_completed 플래그 설정
+    2. temp_data의 온보딩 컨텍스트 삭제 (daily_session_data는 유지)
+    3. DB에 저장된 온보딩 턴 삭제 (혹시 있을 경우 대비)
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
     """
+    # 1. 온보딩 완료 플래그 설정
     await db.create_or_update_user(user_id, {"onboarding_completed": True})
     logger.info(f"[UserRepo] ✅ onboarding_completed = True")
 
+    # 2. temp_data의 온보딩 컨텍스트 삭제
+    conv_state = await db.get_conversation_state(user_id)
+    if conv_state and conv_state.get("temp_data"):
+        temp_data = conv_state["temp_data"]
+
+        # 온보딩 관련 필드만 삭제 (daily_session_data는 유지)
+        temp_data.pop("onboarding_messages", None)
+        temp_data.pop("field_attempts", None)
+        temp_data.pop("field_status", None)
+        temp_data.pop("question_turn", None)
+
+        await db.upsert_conversation_state(user_id, current_step="completed", temp_data=temp_data)
+        logger.info(f"[UserRepo] 🗑️ temp_data 온보딩 컨텍스트 삭제 완료")
+
+    # 3. DB 온보딩 대화 턴 삭제 (혹시 저장된 경우 대비, V2 스키마)
+    try:
+        if not db.supabase:
+            logger.warning(f"[UserRepo] Supabase 미연결 - 온보딩 턴 삭제 스킵")
+            return
+
+        # 2-1. 삭제할 턴 조회
+        turns_response = db.supabase.table("message_history") \
+            .select("uuid, user_answer_key, ai_answer_key") \
+            .eq("kakao_user_id", user_id) \
+            .execute()
+
+        if not turns_response.data:
+            logger.info(f"[UserRepo] 삭제할 온보딩 턴 없음")
+            return
+
+        turn_count = len(turns_response.data)
+        user_answer_keys = [turn["user_answer_key"] for turn in turns_response.data]
+        ai_answer_keys = [turn["ai_answer_key"] for turn in turns_response.data]
+
+        # 2-2. message_history 삭제
+        db.supabase.table("message_history") \
+            .delete() \
+            .eq("kakao_user_id", user_id) \
+            .execute()
+
+        # 2-3. user_answer_messages 삭제
+        if user_answer_keys:
+            db.supabase.table("user_answer_messages") \
+                .delete() \
+                .in_("uuid", user_answer_keys) \
+                .execute()
+
+        # 2-4. ai_answer_messages 삭제
+        if ai_answer_keys:
+            db.supabase.table("ai_answer_messages") \
+                .delete() \
+                .in_("uuid", ai_answer_keys) \
+                .execute()
+
+        logger.info(f"[UserRepo] 🗑️ 온보딩 턴 삭제 완료: {turn_count}개")
+
+    except Exception as e:
+        logger.error(f"[UserRepo] 온보딩 턴 삭제 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
 
 async def get_onboarding_history(db, user_id: str) -> Tuple[int, list]:
-    """온보딩 대화 히스토리 조회 및 과다 감지
+    """온보딩 대화 히스토리 조회 (V2 스키마)
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
 
     Returns:
-        (total_count, recent_messages): 전체 개수와 최근 3개 메시지
+        (total_count, recent_turns): 전체 턴 개수와 최근 3개 턴
     """
-    import asyncio
-    total_count, recent_messages = await asyncio.gather(
-        db.count_messages(user_id),
-        db.get_conversation_history(user_id, limit=3)
-    )
+    # V2: 최근 턴만 조회 (온보딩 중에는 대화가 많지 않음)
+    recent_turns = await db.get_recent_turns_v2(user_id, limit=10)
+    total_count = len(recent_turns)
 
-    # 10개 넘으면 초기화 (실패 패턴 누적 방지)
-    if total_count > 10:
-        logger.warning(f"[UserRepo] 대화 히스토리 과다 감지 ({total_count}개) - 초기화")
-        await db.delete_conversations(user_id)
-        return 0, []
+    # V2에서는 개별 턴 관리로 삭제 기능 불필요
+    # 온보딩 실패 패턴은 field_attempts로 감지
 
-    return total_count, recent_messages
+    return total_count, recent_turns[:3]  # 최근 3개만 반환

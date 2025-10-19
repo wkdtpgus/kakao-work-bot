@@ -10,7 +10,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from .workflow import build_workflow_graph
 from ..utils.models import CHAT_MODEL_CONFIG, ONBOARDING_MODEL_CONFIG
 from ..utils.utils import simple_text_response, error_response
-from .memory_manager import MemoryManager
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
 from langchain_openai import ChatOpenAI
 import os
@@ -30,9 +29,6 @@ class GraphManager:
     async def init_all_graphs(self):
         """모든 그래프 타입 초기화"""
         try:
-            # 워크플로우 초기화
-            memory_manager = MemoryManager()
-
             # 온보딩용 LLM (structured output)
             chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
             onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
@@ -40,7 +36,7 @@ class GraphManager:
             # 서비스용 LLM (일반 채팅)
             service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-            main_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
+            main_graph = build_workflow_graph(self.db, onboarding_llm, service_llm)
             self.graph_types["main"] = main_graph
 
             logger.info("모든 그래프 타입 초기화 완료")
@@ -65,8 +61,6 @@ class GraphManager:
 
             # 메모리 세이버와 함께 새로운 그래프 컴파일
             if graph_type == "main":
-                memory_manager = MemoryManager()
-
                 # 온보딩용 LLM
                 chat_model = ChatOpenAI(**ONBOARDING_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
                 onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
@@ -74,7 +68,7 @@ class GraphManager:
                 # 서비스용 LLM
                 service_llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
 
-                user_graph = build_workflow_graph(self.db, memory_manager, onboarding_llm, service_llm)
+                user_graph = build_workflow_graph(self.db, onboarding_llm, service_llm)
             else:
                 user_graph = base_graph
 
@@ -151,7 +145,8 @@ class ChatBotManager:
 
     async def get_user_info(self, user_id: str) -> Dict:
         """사용자 정보 조회 (API 레이어 분리)"""
-        return await self.db.get_user(user_id)
+        user = await self.db.get_user(user_id)
+        return user.dict() if user else {}
 
     async def handle_conversation(self, user_id: str, message: str, action_hint: str = None) -> Dict:
         """대화 처리 - 워크플로우 진입점"""

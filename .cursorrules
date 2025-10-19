@@ -62,14 +62,19 @@ src/
 │   ├── workflow.py   # Graph building
 │   ├── graph_manager.py  # User-specific graph management
 │   └── memory_manager.py # Conversation memory management
+├── database/         # DB layer (Repository Pattern)
+│   ├── database.py   # Supabase low-level CRUD
+│   ├── schemas.py    # Pydantic schemas for type safety
+│   ├── user_repository.py         # User-related complex queries
+│   ├── conversation_repository.py # Conversation state management
+│   └── summary_repository.py      # Summary save logic
 ├── service/          # Business logic (LLM call services)
 │   ├── intent_classifier.py
 │   ├── summary_generator.py
 │   └── weekly_feedback_generator.py
 ├── prompt/           # Prompt templates
 ├── utils/            # Utilities (models.py, utils.py)
-├── config/           # Configuration (config.py)
-└── database.py       # DB layer (Supabase)
+└── config/           # Configuration (config.py)
 ```
 
 ### 4. Layer Separation Principles

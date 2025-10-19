@@ -19,14 +19,14 @@ async def get_today_conversations(db, user_id: str) -> Tuple[list, Optional[Dict
     """
     today = datetime.now().date().isoformat()
 
-    # 병렬 쿼리
+    # 병렬 쿼리 (V2 스키마 사용)
     import asyncio
     today_turns, conv_state = await asyncio.gather(
-        db.get_conversation_history_by_date(user_id, today, limit=50),
+        db.get_conversation_history_by_date_v2(user_id, today, limit=50),
         db.get_conversation_state(user_id)
     )
 
-    logger.info(f"[ConvRepo] 오늘 대화 로드: {len(today_turns)}개")
+    logger.info(f"[ConvRepo V2] 오늘 대화 로드: {len(today_turns)}개")
     return today_turns, conv_state
 
 

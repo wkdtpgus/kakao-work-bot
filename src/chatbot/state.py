@@ -4,6 +4,7 @@ LangGraph용 대화 상태 관리
 
 from typing import List, Dict, Any, Optional, TypedDict
 from dataclasses import dataclass
+from datetime import date
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -68,7 +69,7 @@ class UserContext(BaseModel):
     onboarding_stage: OnboardingStage = OnboardingStage.NOT_STARTED
     metadata: Optional[UserMetadata] = None
     attendance_count: int = 0  # 출석(일일기록) 카운트
-    last_record_date: Optional[str] = None
+    last_record_date: Optional[date] = None
     daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (대화 횟수 추적)
 
 

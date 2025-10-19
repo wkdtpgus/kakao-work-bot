@@ -20,14 +20,25 @@ class Database:
         self._mock_users = {}
         self._mock_states = {}
 
-    async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """사용자 정보 조회"""
+    async def get_user(self, user_id: str) -> Optional["UserSchema"]:
+        """사용자 정보 조회
+
+        Returns:
+            Optional[UserSchema]: UserSchema 객체 (없으면 None)
+        """
+        from .schemas import UserSchema
+
         if not self.supabase:
-            return self._mock_users.get(user_id)
+            mock_data = self._mock_users.get(user_id)
+            return UserSchema(**mock_data) if mock_data else None
 
         try:
             response = self.supabase.table("users").select("*").eq("kakao_user_id", user_id).single().execute()
-            return response.data if response.data else None
+            if not response.data:
+                return None
+
+            # dict → UserSchema 변환 (Pydantic이 타입 변환 자동 처리)
+            return UserSchema(**response.data)
         except Exception as e:
             if "PGRST116" in str(e):  # 데이터 없음
                 return None
@@ -165,203 +176,6 @@ class Database:
             print(f"❌ Supabase 연결 실패: {e}")
             return False
 
-    # ============================================
-    # 메모리 관리 메서드 (conversations 테이블)
-    # ============================================
-
-    async def save_message(self, user_id: str, role: str, content: str) -> bool:
-        """대화 메시지 저장 (롱텀 메모리) - ai_conversations 테이블 활용"""
-        if not self.supabase:
-            # Mock 모드: 메모리에만 저장
-            if not hasattr(self, '_mock_conversations'):
-                self._mock_conversations = []
-            self._mock_conversations.append({
-                "user_id": user_id,
-                "role": role,
-                "content": content,
-                "created_at": datetime.now().isoformat()
-            })
-            return True
-
-        try:
-            # 1. 기존 대화 가져오기
-            response = self.supabase.table("ai_conversations") \
-                .select("conversation_history") \
-                .eq("kakao_user_id", user_id) \
-                .execute()
-
-            # 2. 대화 히스토리 구성
-            if response.data and len(response.data) > 0:
-                history = response.data[0].get("conversation_history", [])
-            else:
-                history = []
-
-            # 3. 새 메시지 추가
-            history.append({
-                "role": role,
-                "content": content,
-                "created_at": datetime.now().isoformat()
-            })
-
-            # 4. 저장 (upsert)
-            self.supabase.table("ai_conversations").upsert({
-                "kakao_user_id": user_id,
-                "conversation_history": history,
-                "updated_at": datetime.now().isoformat()
-            }, on_conflict="kakao_user_id").execute()
-
-            return True
-        except Exception as e:
-            print(f"메시지 저장 오류: {e}")
-            return False
-
-    async def get_conversation_history(
-        self,
-        user_id: str,
-        limit: int = 10,
-        offset: int = 0
-    ) -> list:
-        """대화 히스토리 조회 - ai_conversations 테이블에서 JSON 파싱 (최신순)"""
-        if not self.supabase:
-            # Mock 모드
-            if not hasattr(self, '_mock_conversations'):
-                return []
-
-            user_messages = [
-                msg for msg in self._mock_conversations
-                if msg["user_id"] == user_id
-            ]
-            # 최신순으로 정렬 후 offset부터 limit개 가져오기
-            user_messages.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-            return user_messages[offset:offset + limit]
-
-        try:
-            # ai_conversations 테이블에서 conversation_history JSON 가져오기
-            response = self.supabase.table("ai_conversations") \
-                .select("conversation_history") \
-                .eq("kakao_user_id", user_id) \
-                .execute()
-
-            if not response.data or len(response.data) == 0:
-                return []
-
-            history = response.data[0].get("conversation_history", [])
-
-            # 최신순으로 정렬 (created_at 기준 내림차순)
-            history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-
-            # offset과 limit 적용
-            return history[offset:offset + limit]
-
-        except Exception as e:
-            print(f"대화 히스토리 조회 오류: {e}")
-            return []
-
-    async def get_conversation_history_by_date(
-        self,
-        user_id: str,
-        date: str,
-        limit: int = 50
-    ) -> list:
-        """특정 날짜의 대화 히스토리만 조회 (요약 생성용)
-
-        Args:
-            user_id: 사용자 ID
-            date: 조회할 날짜 (YYYY-MM-DD)
-            limit: 최대 조회 개수
-
-        Returns:
-            list: 해당 날짜의 대화 히스토리 (시간순)
-        """
-        if not self.supabase:
-            # Mock 모드
-            if not hasattr(self, '_mock_conversations'):
-                return []
-
-            user_messages = [
-                msg for msg in self._mock_conversations
-                if msg["user_id"] == user_id and msg.get("created_at", "")[:10] == date
-            ]
-            # 시간순으로 정렬
-            user_messages.sort(key=lambda x: x.get("created_at", ""))
-            return user_messages[:limit]
-
-        try:
-            # ai_conversations 테이블에서 conversation_history JSON 가져오기
-            response = self.supabase.table("ai_conversations") \
-                .select("conversation_history") \
-                .eq("kakao_user_id", user_id) \
-                .execute()
-
-            if not response.data or len(response.data) == 0:
-                return []
-
-            history = response.data[0].get("conversation_history", [])
-
-            # 해당 날짜의 대화만 필터링 (YYYY-MM-DD 형식)
-            today_history = [
-                turn for turn in history
-                if turn.get("created_at", "")[:10] == date
-            ]
-
-            # 시간순으로 정렬 (오래된 순 → 최신 순)
-            today_history.sort(key=lambda x: x.get("created_at", ""))
-
-            # limit 적용
-            return today_history[:limit]
-
-        except Exception as e:
-            print(f"날짜별 대화 히스토리 조회 오류: {e}")
-            return []
-
-    async def count_messages(self, user_id: str) -> int:
-        """사용자의 전체 메시지 개수 - ai_conversations JSON 길이"""
-        if not self.supabase:
-            # Mock 모드
-            if not hasattr(self, '_mock_conversations'):
-                return 0
-            return len([
-                msg for msg in self._mock_conversations
-                if msg["user_id"] == user_id
-            ])
-
-        try:
-            response = self.supabase.table("ai_conversations") \
-                .select("conversation_history") \
-                .eq("kakao_user_id", user_id) \
-                .execute()
-
-            if not response.data or len(response.data) == 0:
-                return 0
-
-            history = response.data[0].get("conversation_history", [])
-            return len(history)
-
-        except Exception as e:
-            print(f"메시지 개수 조회 오류: {e}")
-            return 0
-
-    async def delete_conversations(self, user_id: str) -> bool:
-        """사용자의 모든 대화 삭제 - ai_conversations 테이블"""
-        if not self.supabase:
-            # Mock 모드
-            if hasattr(self, '_mock_conversations'):
-                self._mock_conversations = [
-                    msg for msg in self._mock_conversations
-                    if msg["user_id"] != user_id
-                ]
-            return True
-
-        try:
-            # conversation_history를 빈 배열로 업데이트
-            self.supabase.table("ai_conversations") \
-                .update({"conversation_history": []}) \
-                .eq("kakao_user_id", user_id) \
-                .execute()
-            return True
-        except Exception as e:
-            print(f"대화 삭제 오류: {e}")
-            return False
 
     # ============================================
     # 요약 관리 메서드 (conversation_states.temp_data에 저장)
@@ -487,17 +301,15 @@ class Database:
             int: 증가된 daily_record_count
         """
         try:
-            today = datetime.now().date().isoformat()
+            today = datetime.now().date()
             user = await self.get_user(user_id)
 
             if not user:
                 print(f"❌ [DB] 사용자 정보 없음: {user_id}")
                 return 0
 
-            # updated_at에서 날짜 부분만 추출 (YYYY-MM-DD)
-            updated_at = user.get("updated_at", "")
-            last_record_date = updated_at[:10] if updated_at else None
-            current_daily_count = user.get("daily_record_count", 0)
+            last_record_date = user.last_record_date
+            current_daily_count = user.daily_record_count
 
             if last_record_date == today:
                 # 오늘 대화 → 카운트 증가
@@ -507,8 +319,10 @@ class Database:
                 new_daily_count = 1
                 print(f"📅 [DB] 날짜 변경 감지 → daily_record_count 리셋: {user_id}")
 
+            # daily_record_count와 last_record_date 함께 업데이트
             await self.create_or_update_user(user_id, {
-                "daily_record_count": new_daily_count
+                "daily_record_count": new_daily_count,
+                "last_record_date": today.isoformat()
             })
             print(f"✅ [DB] daily_record_count 업데이트: {user_id} → {new_daily_count}회")
             return new_daily_count
@@ -538,7 +352,7 @@ class Database:
                 print(f"❌ [DB] 사용자 정보 없음: {user_id}")
                 return 0
 
-            current_count = user.get("attendance_count", 0)
+            current_count = user.attendance_count
 
             # 안전장치: 5회 미만이면 증가 안 함
             if daily_record_count < 5:
@@ -558,8 +372,11 @@ class Database:
             return 0
 
     # =============================================================================
-    # 주간 요약 관리
+    # 주간 요약 관리 (weekly_summaries 테이블) - DEPRECATED
     # =============================================================================
+    # ⚠️ DEPRECATED: V2 스키마에서는 ai_answer_messages 테이블 사용
+    # - 저장: save_conversation_turn(is_summary=True, summary_type='weekly')
+    # - 조회: summary_messages_view 사용 (summary_type='weekly' 필터)
 
     async def save_weekly_summary(
         self,
@@ -571,7 +388,10 @@ class Database:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> bool:
-        """주간 요약 저장"""
+        """⚠️ DEPRECATED: V2 스키마에서는 save_conversation_turn(is_summary=True, summary_type='weekly') 사용
+
+        주간 요약 저장
+        """
         if not self.supabase:
             print("⚠️ [DB] Supabase 미연결 - 주간요약 저장 스킵")
             return False
@@ -601,7 +421,10 @@ class Database:
             return False
 
     async def get_weekly_summaries(self, user_id: str, limit: int = 10) -> list:
-        """유저의 주간요약 목록 조회 (최신순)"""
+        """⚠️ DEPRECATED: V2 스키마에서는 summary_messages_view 사용 (summary_type='weekly' 필터)
+
+        유저의 주간요약 목록 조회 (최신순)
+        """
         if not self.supabase:
             return []
 
@@ -620,7 +443,10 @@ class Database:
             return []
 
     async def get_weekly_summary_by_sequence(self, user_id: str, sequence_number: int) -> Optional[Dict]:
-        """특정 시퀀스의 주간요약 조회"""
+        """⚠️ DEPRECATED: V2 스키마에서는 summary_messages_view 사용 (summary_type='weekly' 필터)
+
+        특정 시퀀스의 주간요약 조회
+        """
         if not self.supabase:
             return None
 
@@ -639,7 +465,10 @@ class Database:
             return None
 
     async def get_latest_weekly_summary(self, user_id: str) -> Optional[Dict]:
-        """최신 주간요약 조회"""
+        """⚠️ DEPRECATED: V2 스키마에서는 summary_messages_view 사용 (summary_type='weekly' 필터)
+
+        최신 주간요약 조회
+        """
         if not self.supabase:
             return None
 
@@ -657,130 +486,309 @@ class Database:
             print(f"❌ [DB] 최신 주간요약 조회 실패: {e}")
             return None
 
+
     # =============================================================================
-    # 일일 기록 관리 (daily_records 테이블)
+    # V2 스키마 - 정규화된 대화 히스토리 관리
     # =============================================================================
 
-    async def save_daily_record(
+    async def save_conversation_turn(
         self,
         user_id: str,
-        summary_content: str,
-        record_date: Optional[str] = None
-    ) -> bool:
-        """일일 기록 저장 (같은 날짜 있으면 업데이트)
+        user_message: str,
+        ai_message: str,
+        is_summary: bool = False,
+        summary_type: str = None
+    ) -> Optional[Dict[str, Any]]:
+        """대화 턴 저장 (V2 스키마)
+
+        user_answer_messages, ai_answer_messages, message_history 테이블에 저장
 
         Args:
             user_id: 카카오 사용자 ID
-            summary_content: 일일 요약 내용
-            record_date: 기록 날짜 (YYYY-MM-DD), None이면 오늘 날짜
+            user_message: 사용자 메시지
+            ai_message: AI 응답
+            is_summary: 요약 메시지 여부 (기본 False)
+            summary_type: 요약 타입 ('daily', 'weekly', None)
 
         Returns:
-            bool: 성공 여부
+            dict: {
+                "history_uuid": "...",
+                "user_uuid": "...",
+                "ai_uuid": "...",
+                "turn_index": 1,
+                "session_date": "2025-10-19"
+            }
         """
         if not self.supabase:
-            print("⚠️ [DB] Supabase 미연결 - 일일기록 저장 스킵")
-            return False
+            print("⚠️ [DB] Supabase 미연결 - 대화 턴 저장 스킵")
+            return None
 
         try:
-            # 날짜 설정 (None이면 오늘)
-            if not record_date:
-                record_date = datetime.now().date().isoformat()
+            from datetime import date
+            session_date = date.today().isoformat()
 
-            # users 테이블에서 내부 user_id (bigint) 조회
-            user_response = self.supabase.table("users")\
-                .select("id")\
-                .eq("kakao_user_id", user_id)\
-                .single()\
+            # 1. 오늘 날짜의 turn_index 계산
+            turn_count_response = self.supabase.table("message_history") \
+                .select("turn_index", count="exact") \
+                .eq("kakao_user_id", user_id) \
+                .eq("session_date", session_date) \
                 .execute()
+
+            turn_index = (turn_count_response.count or 0) + 1
+
+            # 2. user_answer_messages 저장
+            user_response = self.supabase.table("user_answer_messages").insert({
+                "kakao_user_id": user_id,
+                "content": user_message
+            }).execute()
 
             if not user_response.data:
-                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
-                return False
+                print(f"❌ [DB V2] user_answer_messages 저장 실패")
+                return None
 
-            internal_user_id = user_response.data["id"]
+            user_uuid = user_response.data[0]["uuid"]
 
-            # 데이터 구성
-            data = {
-                "user_id": internal_user_id,
-                "work_content": summary_content,
-                "record_date": record_date,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
+            # 3. ai_answer_messages 저장
+            ai_response = self.supabase.table("ai_answer_messages").insert({
+                "kakao_user_id": user_id,
+                "content": ai_message,
+                "is_summary": is_summary,
+                "summary_type": summary_type  # 🆕 추가
+            }).execute()
+
+            if not ai_response.data:
+                print(f"❌ [DB V2] ai_answer_messages 저장 실패")
+                return None
+
+            ai_uuid = ai_response.data[0]["uuid"]
+
+            # 4. message_history에 턴 저장
+            history_response = self.supabase.table("message_history").insert({
+                "kakao_user_id": user_id,
+                "user_answer_key": user_uuid,
+                "ai_answer_key": ai_uuid,
+                "session_date": session_date,
+                "turn_index": turn_index
+            }).execute()
+
+            if not history_response.data:
+                print(f"❌ [DB V2] message_history 저장 실패")
+                return None
+
+            history_uuid = history_response.data[0]["uuid"]
+
+            print(f"✅ [DB V2] 대화 턴 저장 완료: {user_id} - 턴 #{turn_index}")
+
+            return {
+                "history_uuid": history_uuid,
+                "user_uuid": user_uuid,
+                "ai_uuid": ai_uuid,
+                "turn_index": turn_index,
+                "session_date": session_date
             }
 
-            # upsert 사용 (user_id + record_date 조합으로 중복 체크)
-            # NOTE: 테이블에 UNIQUE(user_id, record_date) 제약조건 필요
-            self.supabase.table("daily_records")\
-                .upsert(data, on_conflict="user_id,record_date")\
-                .execute()
-
-            print(f"✅ [DB] 일일기록 저장 완료 (upsert): {user_id} - {record_date}")
-
-            return True
-
         except Exception as e:
-            print(f"❌ [DB] 일일기록 저장 실패: {e}")
+            print(f"❌ [DB V2] 대화 턴 저장 실패: {e}")
             import traceback
             traceback.print_exc()
-            return False
+            return None
 
-    async def get_daily_records(
+    async def get_recent_turns_v2(
         self,
         user_id: str,
-        limit: int = 7,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        limit: int = 5
     ) -> list:
-        """일일 기록 조회 (최신순)
+        """최근 N개 턴 조회 (V2 스키마 - RPC 함수 사용)
 
         Args:
             user_id: 카카오 사용자 ID
-            limit: 조회할 기록 수 (기본 7개)
-            start_date: 시작 날짜 (YYYY-MM-DD), None이면 제한 없음
-            end_date: 종료 날짜 (YYYY-MM-DD), None이면 제한 없음
+            limit: 조회할 턴 수 (기본 5개)
 
         Returns:
-            list: 일일 기록 목록 [{record_date, work_content, ...}, ...]
+            list: [
+                {
+                    "turn_index": 3,
+                    "user_message": "...",
+                    "ai_message": "...",
+                    "session_date": "2025-10-15",
+                    "created_at": "..."
+                },
+                ...
+            ]
         """
         if not self.supabase:
-            print("⚠️ [DB] Supabase 미연결 - 일일기록 조회 스킵")
             return []
 
         try:
-            # users 테이블에서 내부 user_id 조회
-            user_response = self.supabase.table("users")\
-                .select("id")\
-                .eq("kakao_user_id", user_id)\
-                .single()\
-                .execute()
+            response = self.supabase.rpc(
+                "get_recent_turns",
+                {
+                    "p_kakao_user_id": user_id,
+                    "p_limit": limit
+                }
+            ).execute()
 
-            if not user_response.data:
-                print(f"❌ [DB] 사용자 정보 없음: {user_id}")
-                return []
-
-            internal_user_id = user_response.data["id"]
-
-            # 쿼리 구성
-            query = self.supabase.table("daily_records")\
-                .select("*")\
-                .eq("user_id", internal_user_id)
-
-            # 날짜 필터링
-            if start_date:
-                query = query.gte("record_date", start_date)
-            if end_date:
-                query = query.lte("record_date", end_date)
-
-            # 최신순 정렬 및 limit
-            response = query.order("record_date", desc=True).limit(limit).execute()
-
-            records = response.data if response.data else []
-            print(f"✅ [DB] 일일기록 조회 완료: {user_id} - {len(records)}개")
-
-            return records
+            return response.data if response.data else []
 
         except Exception as e:
-            print(f"❌ [DB] 일일기록 조회 실패: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ [DB V2] 최근 턴 조회 실패: {e}")
+            return []
+
+    async def get_shortterm_memory_v2(self, user_id: str) -> list:
+        """숏텀 메모리 조회 (V2 스키마 - recent_conversations 뷰 사용)
+
+        Args:
+            user_id: 카카오 사용자 ID
+
+        Returns:
+            list: [
+                {"user": "안녕", "ai": "안녕하세요"},
+                {"user": "오늘 뭐했어", "ai": "..."},
+                ...
+            ]
+        """
+        if not self.supabase:
+            return []
+
+        try:
+            response = self.supabase.table("recent_conversations") \
+                .select("recent_turns") \
+                .eq("kakao_user_id", user_id) \
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                return response.data[0].get("recent_turns", [])
+            return []
+
+        except Exception as e:
+            print(f"❌ [DB V2] 숏텀 메모리 조회 실패: {e}")
+            return []
+
+    async def get_daily_summaries_v2(self, user_id: str, limit: int = 7) -> list:
+        """데일리 요약 조회 (V2 스키마 - RPC 함수 사용)
+
+        하루에 여러 데일리 요약을 생성한 경우, 각 날짜별 최신 요약만 반환합니다.
+        이를 통해 주간 요약 생성 시 정확히 7일치 데이터를 가져올 수 있습니다.
+
+        Args:
+            user_id: 카카오 사용자 ID
+            limit: 조회할 고유 날짜 수 (기본 7개)
+
+        Returns:
+            list: [
+                {
+                    "summary_content": "오늘의 요약...",
+                    "session_date": "2025-10-19",
+                    "created_at": "...",
+                    "summary_type": "daily"
+                },
+                ...
+            ]
+        """
+        if not self.supabase:
+            return []
+
+        try:
+            # RPC 함수 호출 (DISTINCT ON session_date로 각 날짜별 최신 요약만 선택)
+            response = self.supabase.rpc(
+                'get_recent_daily_summaries_by_unique_dates',
+                {
+                    'p_kakao_user_id': user_id,
+                    'p_limit': limit
+                }
+            ).execute()
+
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"❌ [DB V2] 데일리 요약 조회 실패: {e}")
+            return []
+
+    async def get_conversation_history_by_date_v2(
+        self,
+        user_id: str,
+        date: str,
+        limit: int = 50
+    ) -> list:
+        """특정 날짜의 대화 턴 조회 (V2 스키마 - RPC 함수 사용)
+
+        Args:
+            user_id: 카카오 사용자 ID
+            date: 조회할 날짜 (YYYY-MM-DD)
+            limit: 최대 조회 개수
+
+        Returns:
+            list: [
+                {
+                    "turn_index": 1,
+                    "user_message": "...",
+                    "ai_message": "...",
+                    "created_at": "..."
+                },
+                ...
+            ]
+        """
+        if not self.supabase:
+            return []
+
+        try:
+            response = self.supabase.rpc(
+                "get_turns_by_date",
+                {
+                    "p_kakao_user_id": user_id,
+                    "p_session_date": date
+                }
+            ).execute()
+
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"❌ [DB V2] 날짜별 대화 조회 실패: {e}")
+            return []
+
+    async def get_conversation_history_for_llm_v2(
+        self,
+        user_id: str,
+        limit: int = 10
+    ) -> list:
+        """LLM API 호출용 대화 히스토리 변환 (V2 스키마)
+
+        Args:
+            user_id: 카카오 사용자 ID
+            limit: 조회할 턴 수 (기본 10개)
+
+        Returns:
+            list: [
+                {"role": "user", "content": "안녕"},
+                {"role": "assistant", "content": "안녕하세요"},
+                ...
+            ]
+        """
+        try:
+            # 5개 이하면 숏텀 메모리 사용 (빠름)
+            if limit <= 5:
+                recent_turns = await self.get_shortterm_memory_v2(user_id)
+
+                # JSONB 형식 → LLM 형식 변환 (오래된 순으로)
+                messages = []
+                for turn in reversed(recent_turns):
+                    messages.append({"role": "user", "content": turn.get("user", "")})
+                    messages.append({"role": "assistant", "content": turn.get("ai", "")})
+
+                return messages
+
+            # 더 많은 히스토리 필요 시 DB 조회
+            else:
+                turns = await self.get_recent_turns_v2(user_id, limit)
+
+                messages = []
+                # reversed로 오래된 순으로 변환
+                for turn in reversed(turns):
+                    messages.append({"role": "user", "content": turn.get("user_message", "")})
+                    messages.append({"role": "assistant", "content": turn.get("ai_message", "")})
+
+                return messages
+
+        except Exception as e:
+            print(f"❌ [DB V2] LLM용 히스토리 변환 실패: {e}")
             return []

@@ -11,13 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 @traceable(name="generate_weekly_feedback")
-async def generate_weekly_feedback(user_id: str, db, memory_manager) -> str:
+async def generate_weekly_feedback(user_id: str, db) -> str:
     """주간 피드백 생성
 
     Args:
         user_id: 사용자 ID
         db: Database 인스턴스
-        memory_manager: MemoryManager 인스턴스
 
     Returns:
         str: 주간 피드백 텍스트
@@ -31,43 +30,35 @@ async def generate_weekly_feedback(user_id: str, db, memory_manager) -> str:
             logger.warning(f"[WeeklyFeedback] 사용자 정보 없음: {user_id}")
             return "사용자 정보를 찾을 수 없습니다."
 
-        name = user.get("name", "사용자")
-        job_title = user.get("job_title", "직무 정보 없음")
-        career_goal = user.get("career_goal", "목표 정보 없음")
+        name = user.name or "사용자"
+        job_title = user.job_title or "직무 정보 없음"
+        career_goal = user.career_goal or "목표 정보 없음"
 
-        # 2. 최근 7일치 일일 기록 조회
-        daily_records = await db.get_daily_records(user_id, limit=7)
+        # 2. 최근 7개 데일리 요약 조회 (ai_answer_messages, summary_type='daily')
+        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=7)
 
-        if not daily_records or len(daily_records) == 0:
-            logger.warning(f"[WeeklyFeedback] 일일 기록 없음 → 대화 히스토리로 대체")
+        if not daily_summaries or len(daily_summaries) == 0:
+            logger.warning(f"[WeeklyFeedback] 데일리 요약 없음 → 최근 대화 히스토리로 대체")
 
-            # 대화 히스토리로 fallback (기존 로직)
-            conversation_context = await memory_manager.get_contextualized_history(user_id, db)
-            summary = conversation_context.get("summary", "")
-            recent_turns = conversation_context.get("recent_turns", [])
+            # 최근 대화 히스토리로 fallback (V2 스키마 사용)
+            recent_turns = await db.get_recent_turns_v2(user_id, limit=20)
 
             formatted_messages = []
-            for msg in recent_turns:
-                role = "사용자" if msg.get("role") == "user" else "AI"
-                content = msg.get("content", "")
-                formatted_messages.append(f"{role}: {content}")
+            for turn in recent_turns:
+                formatted_messages.append(f"사용자: {turn.get('user_message', '')}")
+                formatted_messages.append(f"AI: {turn.get('ai_message', '')}")
 
-            recent_conversation = "\n".join(formatted_messages)
-
-            if summary:
-                full_context = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{recent_conversation}"
-            else:
-                full_context = f"[최근 대화]\n{recent_conversation}"
+            full_context = "[최근 대화]\n" + "\n".join(formatted_messages)
         else:
-            # 일일 기록 기반 컨텍스트 구성
-            formatted_records = []
-            for record in reversed(daily_records):  # 오래된 순으로 정렬
-                record_date = record.get("record_date", "날짜 미상")
-                work_content = record.get("work_content", "")
-                formatted_records.append(f"**{record_date}**\n{work_content}")
+            # 데일리 요약 기반 컨텍스트 구성
+            formatted_summaries = []
+            for summary in reversed(daily_summaries):  # 오래된 순으로 정렬
+                session_date = summary.get("session_date", "날짜 미상")
+                content = summary.get("summary_content", "")
+                formatted_summaries.append(f"**{session_date}**\n{content}")
 
-            full_context = "\n\n".join(formatted_records)
-            logger.info(f"[WeeklyFeedback] 일일 기록 기반 컨텍스트 구성 완료 ({len(daily_records)}일치)")
+            full_context = "\n\n".join(formatted_summaries)
+            logger.info(f"[WeeklyFeedback] 데일리 요약 기반 컨텍스트 구성 완료 ({len(daily_summaries)}개)")
 
         # 4. 주간 피드백 프롬프트 구성
         system_prompt = WEEKLY_AGENT_SYSTEM_PROMPT.format(

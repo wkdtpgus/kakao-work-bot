@@ -27,15 +27,17 @@ async def generate_daily_summary(
     Returns:
         tuple[str, int]: (요약 텍스트, 출석 카운트)
     """
-    # 대화 텍스트 구성 (최신 10개, 최신순으로 정렬되어 있으므로 앞에서 10개)
+    # 대화 텍스트 구성 (최신 10개, 최신순으로 정렬되어 있으므로 앞에서 10개, V2 스키마)
     recent_turns = conversation_context["recent_turns"][:10]
     # 시간순으로 역정렬하여 오래된 대화 → 최신 대화 순서로 표시
     recent_turns_reversed = list(reversed(recent_turns))
 
-    conversation_text = "\n".join([
-        f"{'사용자' if t['role'] == 'user' else '봇'}: {t['content']}"
-        for t in recent_turns_reversed
-    ])
+    # V2 스키마: 각 턴은 {"user_message": "...", "ai_message": "..."} 형태
+    conversation_lines = []
+    for turn in recent_turns_reversed:
+        conversation_lines.append(f"사용자: {turn['user_message']}")
+        conversation_lines.append(f"봇: {turn['ai_message']}")
+    conversation_text = "\n".join(conversation_lines)
 
     # 사용자 메타데이터 텍스트
     user_metadata_text = f"""
@@ -61,19 +63,13 @@ async def generate_daily_summary(
 
     # 현재 출석 카운트 조회 (증가는 daily_agent_node에서 처리)
     user = await db.get_user(user_id)
-    daily_count = user.get("attendance_count", 0)
-    daily_record_count = user.get("daily_record_count", 0)
+    daily_count = user.attendance_count if user else 0
+    daily_record_count = user.daily_record_count if user else 0
 
     logger.info(f"[DailySummary] 요약 생성 완료 (attendance_count={daily_count}일차, daily_record_count={daily_record_count}회)")
 
-    # 일일 기록 DB 저장 (같은 날짜 있으면 최신 내용으로 업데이트)
-    from datetime import datetime
-    today = datetime.now().date().isoformat()
-
-    await db.save_daily_record(
-        user_id=user_id,
-        summary_content=summary_text
-    )
-    logger.info(f"[DailySummary] 일일기록 DB 저장 완료 (record_date: {today})")
+    # 🆕 V2 스키마: 요약은 nodes.py에서 save_conversation_turn()으로 저장됨
+    # ai_answer_messages 테이블에 is_summary=TRUE, summary_type='daily'로 저장
+    # daily_records 테이블은 더 이상 사용 안 함
 
     return summary_text, daily_count

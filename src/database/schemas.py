@@ -51,50 +51,36 @@ class ConversationStateSchema(BaseModel):
 
 
 # ============================================
-# 3. ai_conversations 테이블 스키마
+# 3. V2 스키마 - 정규화된 대화 히스토리 테이블
 # ============================================
 
-class ConversationMessageSchema(BaseModel):
-    """ai_conversations JSON 메시지 스키마"""
-    role: str  # "user" or "assistant"
-    content: str
-    created_at: str
-
-
-class AIConversationSchema(BaseModel):
-    """ai_conversations 테이블 스키마"""
-    id: Optional[str] = None  # UUID
-    kakao_user_id: str
-    conversation_history: List[Dict[str, str]] = Field(default_factory=list)
-    updated_at: Optional[str] = None
-
-
-# ============================================
-# 4. daily_records 테이블 스키마
-# ============================================
-
-class DailyRecordSchema(BaseModel):
-    """daily_records 테이블 스키마"""
+class UserMessageSchema(BaseModel):
+    """user_answer_messages 테이블 스키마 (V2)"""
     id: Optional[int] = None
-    user_id: int  # users.id (BIGINT)
-    work_content: str
-    record_date: str  # YYYY-MM-DD
+    uuid: Optional[str] = None  # UUID
+    kakao_user_id: str
+    content: str  # 메시지 내용
     created_at: Optional[str] = None
-    updated_at: Optional[str] = None
 
 
-# ============================================
-# 5. weekly_summaries 테이블 스키마
-# ============================================
-
-class WeeklySummarySchema(BaseModel):
-    """weekly_summaries 테이블 스키마"""
+class AIMessageSchema(BaseModel):
+    """ai_answer_messages 테이블 스키마 (V2)"""
     id: Optional[int] = None
+    uuid: Optional[str] = None  # UUID
     kakao_user_id: str
-    sequence_number: int
-    start_daily_count: int
-    end_daily_count: int
-    summary_content: str
-    start_date: Optional[str] = None  # YYYY-MM-DD
-    end_date: Optional[str] = None  # YYYY-MM-DD
+    content: str  # 메시지 내용
+    is_summary: bool = False  # 요약 여부
+    summary_type: Optional[str] = None  # 'daily', 'weekly', None
+    created_at: Optional[str] = None
+
+
+class MessageTurnSchema(BaseModel):
+    """message_history 테이블 스키마 (V2) - 대화 턴 (user-ai 쌍)"""
+    id: Optional[int] = None
+    uuid: Optional[str] = None  # UUID
+    kakao_user_id: str
+    user_answer_key: str  # user_answer_messages의 UUID
+    ai_answer_key: str  # ai_answer_messages의 UUID
+    session_date: str  # YYYY-MM-DD
+    turn_index: Optional[int] = None  # 날짜 내 턴 순서
     created_at: Optional[str] = None
