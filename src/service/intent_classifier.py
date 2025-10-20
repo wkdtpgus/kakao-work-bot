@@ -34,10 +34,10 @@ async def classify_user_intent(message: str, llm, user_context=None, db=None) ->
 
     # 요약 요청 시 오늘 대화 존재 여부 체크
     if "summary" in intent and user_context:
-        # 현재 세션에 대화가 있는지 체크 (conversation_count > 0)
-        conversation_count = user_context.daily_session_data.get("conversation_count", 0)
+        # daily_record_count 체크 (날짜 리셋 시에만 0으로 초기화, 당일에는 계속 증가)
+        daily_record_count = user_context.daily_record_count
 
-        if conversation_count == 0:
+        if daily_record_count == 0:
             # 오늘 대화가 없으면 no_record_today 반환
             return "no_record_today"
 

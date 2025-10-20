@@ -69,6 +69,7 @@ class UserContext(BaseModel):
     onboarding_stage: OnboardingStage = OnboardingStage.NOT_STARTED
     metadata: Optional[UserMetadata] = None
     attendance_count: int = 0  # 출석(일일기록) 카운트
+    daily_record_count: int = 0  # 일일 대화 카운트 (5회 달성 시 attendance_count 증가)
     last_record_date: Optional[date] = None
     daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (대화 횟수 추적)
 
@@ -92,9 +93,8 @@ class OverallState(TypedDict):
     action_hint: Optional[str]  # 카카오톡 버튼 힌트 ("onboarding", "daily_record", "service_feedback")
 
     # DB 쿼리 캐시 (한 요청 내에서 재사용)
-    cached_user: Optional[Dict[str, Any]]  # UserSchema from get_user_with_context
     cached_conv_state: Optional[Dict[str, Any]]  # ConversationStateSchema
-    cached_today_conversations: Optional[List[Dict[str, Any]]]  # 오늘 대화 목록
+    cached_today_turns: Optional[List[Dict[str, Any]]]  # 오늘 대화 목록 (요약 시 전체, 일반 대화 시 최근 3턴)
 
 
 @dataclass

@@ -146,7 +146,7 @@ class ChatBotManager:
     async def get_user_info(self, user_id: str) -> Dict:
         """사용자 정보 조회 (API 레이어 분리)"""
         user = await self.db.get_user(user_id)
-        return user.dict() if user else {}
+        return user if user else {}
 
     async def handle_conversation(self, user_id: str, message: str, action_hint: str = None) -> Dict:
         """대화 처리 - 워크플로우 진입점"""

@@ -20,25 +20,21 @@ class Database:
         self._mock_users = {}
         self._mock_states = {}
 
-    async def get_user(self, user_id: str) -> Optional["UserSchema"]:
+    async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """사용자 정보 조회
 
         Returns:
-            Optional[UserSchema]: UserSchema 객체 (없으면 None)
+            Optional[Dict[str, Any]]: 사용자 정보 dict (없으면 None)
         """
-        from .schemas import UserSchema
-
         if not self.supabase:
-            mock_data = self._mock_users.get(user_id)
-            return UserSchema(**mock_data) if mock_data else None
+            return self._mock_users.get(user_id)
 
         try:
             response = self.supabase.table("users").select("*").eq("kakao_user_id", user_id).single().execute()
             if not response.data:
                 return None
 
-            # dict → UserSchema 변환 (Pydantic이 타입 변환 자동 처리)
-            return UserSchema(**response.data)
+            return response.data
         except Exception as e:
             if "PGRST116" in str(e):  # 데이터 없음
                 return None
@@ -308,10 +304,10 @@ class Database:
                 print(f"❌ [DB] 사용자 정보 없음: {user_id}")
                 return 0
 
-            last_record_date = user.last_record_date
-            current_daily_count = user.daily_record_count
+            last_record_date = user.get("last_record_date")
+            current_daily_count = user.get("daily_record_count", 0)
 
-            if last_record_date == today:
+            if last_record_date == today.isoformat():
                 # 오늘 대화 → 카운트 증가
                 new_daily_count = current_daily_count + 1
             else:
@@ -352,7 +348,7 @@ class Database:
                 print(f"❌ [DB] 사용자 정보 없음: {user_id}")
                 return 0
 
-            current_count = user.attendance_count
+            current_count = user.get("attendance_count", 0)
 
             # 안전장치: 5회 미만이면 증가 안 함
             if daily_record_count < 5:

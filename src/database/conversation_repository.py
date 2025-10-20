@@ -1,7 +1,6 @@
 """대화 관련 복합 DB 로직"""
 from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
-from .schemas import ConversationStateSchema
 import logging
 
 logger = logging.getLogger(__name__)

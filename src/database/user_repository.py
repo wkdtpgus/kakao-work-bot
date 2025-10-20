@@ -1,13 +1,12 @@
 """사용자 관련 복합 DB 로직"""
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from datetime import datetime
-from .schemas import UserSchema
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema], "UserContext"]:
+async def get_user_with_context(db, user_id: str) -> Tuple[Optional[Dict[str, Any]], "UserContext"]:
     """사용자 정보 + UserContext 구성 (router_node용)
 
     Args:
@@ -15,7 +14,7 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema],
         user_id: 카카오 사용자 ID
 
     Returns:
-        (user_data, user_context): UserSchema와 UserContext 튜플
+        (user_data, user_context): 사용자 정보 dict와 UserContext 튜플
     """
     from ..chatbot.state import UserContext, UserMetadata, OnboardingStage
 
@@ -52,14 +51,14 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema],
         )
         return None, user_context
 
-    # user는 이미 UserSchema 객체
+    # user는 dict 객체
 
     # 기존 사용자 - 메타데이터 구성
     DATA_FIELDS = ["name", "job_title", "total_years", "job_years", "career_goal",
                    "project_name", "recent_work", "job_meaning", "important_thing"]
 
     metadata = UserMetadata(**{
-        k: getattr(user, k) for k in DATA_FIELDS
+        k: user.get(k) for k in DATA_FIELDS
     })
 
     # conversation_states에서 세션 상태 복원
@@ -104,8 +103,9 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[UserSchema],
         user_id=user_id,
         onboarding_stage=OnboardingStage.COMPLETED if is_complete else OnboardingStage.COLLECTING_BASIC,
         metadata=metadata,
-        daily_record_count=user.attendance_count,
-        last_record_date=user.last_record_date,
+        attendance_count=user.get("attendance_count", 0),
+        daily_record_count=user.get("daily_record_count", 0),
+        last_record_date=user.get("last_record_date"),
         daily_session_data=daily_session_data
     )
 
@@ -127,15 +127,15 @@ async def check_and_reset_daily_count(db, user_id: str) -> Tuple[int, bool]:
     if not user:
         return 0, False
     today = datetime.now().date()
-    last_record_date = user.last_record_date
+    last_record_date = user.get("last_record_date")
 
     # 날짜가 바뀌었으면 리셋
-    if last_record_date and last_record_date != today:
+    if last_record_date and last_record_date != today.isoformat():
         logger.info(f"[UserRepo] 📅 날짜 변경 감지: {last_record_date} → {today}")
         await db.create_or_update_user(user_id, {"daily_record_count": 0})
         return 0, True
 
-    return user.daily_record_count, False
+    return user.get("daily_record_count", 0), False
 
 
 async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[int]]:
@@ -156,7 +156,7 @@ async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[i
     # 5회가 되는 순간 attendance_count 증가
     if new_daily_count == 5:
         user = await db.get_user(user_id)
-        current_attendance = user.attendance_count if user else 0
+        current_attendance = user.get("attendance_count", 0) if user else 0
         new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
         logger.info(f"[UserRepo] 🎉 5회 달성! attendance: {current_attendance} → {new_attendance}일차")
         return new_daily_count, new_attendance
