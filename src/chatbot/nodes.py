@@ -10,7 +10,7 @@ from ..service.weekly_fallback_generator import (
     format_already_processed_message,
     format_no_record_message
 )
-from langchain_openai import ChatOpenAI
+from langchain_google_vertexai import ChatVertexAI
 from ..utils.models import CHAT_MODEL_CONFIG
 import logging
 from typing import Literal
@@ -428,7 +428,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             user_context.attendance_count = current_attendance
 
         metadata = user_context.metadata
-        llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+        llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
         # 현재 세션의 대화 횟수 계산 (user + bot 쌍 = 1회)
         current_session_count = user_context.daily_session_data.get("conversation_count", 0)
@@ -653,7 +653,7 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
     logger.info(f"[WeeklyAgent] user_id={user_id}, message={message}")
 
     # LLM 인스턴스 생성
-    llm = ChatOpenAI(**CHAT_MODEL_CONFIG, api_key=os.getenv("OPENAI_API_KEY"))
+    llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
 
     try:
         # Repository 함수로 주간 요약 플래그 확인

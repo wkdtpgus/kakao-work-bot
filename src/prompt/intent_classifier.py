@@ -18,6 +18,9 @@ IMPORTANT:
 - "응", "네", "그래", "좋아" 등 긍정 응답은 "summary"로 분류 (봇이 요약 제안했을 가능성 높음)
 - Only use "rejection" for CLEAR, EXPLICIT refusal responses to bot's suggestions
 - "edit_summary" includes ANY complaint or correction about the summary content (e.g., factual errors, missing info, hallucinations)
+- **CRITICAL**: Corrections/negations during ongoing conversation ("안했어", "선택 안했다니까", "그거 아니야") are "continue", NOT "edit_summary" or "rejection"
+  - These are part of the conversation flow where user is clarifying what they actually did
+  - Only classify as "edit_summary" if there's a COMPLETED summary to modify
 - General work-related conversation is "continue", NOT "rejection"
 
 Response format: Only return one of: summary, edit_summary, rejection, continue, restart"""
