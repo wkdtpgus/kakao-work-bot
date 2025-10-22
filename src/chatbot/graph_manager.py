@@ -8,7 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from .workflow import build_workflow_graph
-from ..utils.models import CHAT_MODEL_CONFIG, ONBOARDING_MODEL_CONFIG
+from ..utils.models import get_chat_llm, get_onboarding_llm
 from ..utils.utils import simple_text_response, error_response
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
 from langchain_google_vertexai import ChatVertexAI
@@ -29,12 +29,11 @@ class GraphManager:
     async def init_all_graphs(self):
         """모든 그래프 타입 초기화"""
         try:
-            # 온보딩용 LLM (structured output)
-            chat_model = ChatVertexAI(**ONBOARDING_MODEL_CONFIG)
-            onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
+            # 온보딩용 LLM (structured output, 캐시됨)
+            onboarding_llm = get_onboarding_llm().with_structured_output(OnboardingResponse)
 
-            # 서비스용 LLM (일반 채팅)
-            service_llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
+            # 서비스용 LLM (일반 채팅, 캐시됨)
+            service_llm = get_chat_llm()
 
             main_graph = build_workflow_graph(self.db, onboarding_llm, service_llm)
             self.graph_types["main"] = main_graph
@@ -61,12 +60,11 @@ class GraphManager:
 
             # 메모리 세이버와 함께 새로운 그래프 컴파일
             if graph_type == "main":
-                # 온보딩용 LLM
-                chat_model = ChatVertexAI(**ONBOARDING_MODEL_CONFIG)
-                onboarding_llm = chat_model.with_structured_output(OnboardingResponse)
+                # 온보딩용 LLM (캐시됨)
+                onboarding_llm = get_onboarding_llm().with_structured_output(OnboardingResponse)
 
-                # 서비스용 LLM
-                service_llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
+                # 서비스용 LLM (캐시됨)
+                service_llm = get_chat_llm()
 
                 user_graph = build_workflow_graph(self.db, onboarding_llm, service_llm)
             else:

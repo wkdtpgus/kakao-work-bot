@@ -11,7 +11,7 @@ from ..service.weekly_fallback_generator import (
     format_no_record_message
 )
 from langchain_google_vertexai import ChatVertexAI
-from ..utils.models import CHAT_MODEL_CONFIG
+from ..utils.models import get_chat_llm
 import logging
 from typing import Literal
 from langgraph.types import Command
@@ -235,6 +235,8 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             target_field=target_field, current_attempt=current_attempt
         )
 
+        print(f"🎯 [OnboardingAgent] target={target_field}, attempt={current_attempt}, message={message[:50]}")
+        print(f"📋 [OnboardingAgent] current_state: {current_state}")
         logger.info(f"[OnboardingAgent] target={target_field}, attempt={current_attempt}, message={message[:50]}")
 
         # LLM 호출 (structured output)
@@ -242,6 +244,20 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
+
+        # 🔍 LLM 응답 디버깅
+        if isinstance(response, OnboardingResponse):
+            print(f"🤖 [OnboardingAgent] LLM 응답:")
+            print(f"   - response: {response.response[:50]}...")
+            print(f"   - total_years: {response.total_years}")
+            print(f"   - job_years: {response.job_years}")
+            print(f"   - career_goal: {response.career_goal}")
+
+            # 🔧 신입 처리: total_years가 "신입"이면 job_years도 자동으로 채우기
+            if response.total_years and "신입" in response.total_years:
+                if not response.job_years:
+                    response.job_years = response.total_years
+                    print(f"   ✅ job_years 자동 설정: {response.job_years}")
 
         # 정보 추출
         updated_metadata = user_context.metadata.copy() if user_context.metadata else UserMetadata()
@@ -428,7 +444,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             user_context.attendance_count = current_attendance
 
         metadata = user_context.metadata
-        llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
+        llm = get_chat_llm()
 
         # 현재 세션의 대화 횟수 계산 (user + bot 쌍 = 1회)
         current_session_count = user_context.daily_session_data.get("conversation_count", 0)
@@ -652,8 +668,8 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
 
     logger.info(f"[WeeklyAgent] user_id={user_id}, message={message}")
 
-    # LLM 인스턴스 생성
-    llm = ChatVertexAI(**CHAT_MODEL_CONFIG)
+    # LLM 인스턴스 가져오기 (캐시됨)
+    llm = get_chat_llm()
 
     try:
         # Repository 함수로 주간 요약 플래그 확인
