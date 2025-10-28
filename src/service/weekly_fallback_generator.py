@@ -29,7 +29,7 @@ def format_partial_weekly_feedback(current_day: int, feedback_text: str) -> str:
     """
     return f"""아직 {current_day}일차예요. 7일차 달성 시 정식 주간요약이 생성되어 저장됩니다.
 
-📌 **지금까지의 활동 (참고용)**
+📌 지금까지의 활동 (참고용)
 
 {feedback_text}
 

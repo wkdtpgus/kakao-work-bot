@@ -55,6 +55,10 @@ class DailySummaryInput(BaseModel):
     daily_record_count: int = Field(
         description="현재 일일 기록 카운트 (참조용)"
     )
+    user_correction: Optional[str] = Field(
+        default=None,
+        description="사용자의 수정 요청 (edit_summary 시 사용)"
+    )
 
     class Config:
         json_schema_extra = {
