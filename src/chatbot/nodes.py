@@ -1,6 +1,4 @@
 from .state import OverallState, UserContext, UserMetadata, OnboardingStage, OnboardingResponse, UserIntent
-from ..utils.utils import get_system_prompt, format_user_prompt
-from ..prompt.onboarding import ONBOARDING_SYSTEM_PROMPT, ONBOARDING_USER_PROMPT_TEMPLATE
 from ..prompt.daily_record_prompt import DAILY_CONVERSATION_SYSTEM_PROMPT
 from ..prompt.intent_classifier import SERVICE_ROUTER_SYSTEM_PROMPT, SERVICE_ROUTER_USER_PROMPT
 from ..service import classify_user_intent, generate_daily_summary, generate_weekly_feedback
@@ -192,7 +190,19 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
 
 @traceable(name="onboarding_agent_node")
 async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal["__end__"]]:
-    """온보딩 대화 + 정보 추출 + DB 저장 (Repository 함수 활용)"""
+    """
+    온보딩 대화 노드 (의도 추출 중심 방식)
+    - LLM: 정보 추출만 수행 (ExtractionResponse)
+    - 시스템: 질문 선택, 검증, 흐름 제어
+    """
+    from src.prompt.onboarding import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT_TEMPLATE, FIELD_DESCRIPTIONS
+    from src.prompt.onboarding_questions import (
+        get_field_template, get_next_field,
+        format_welcome_message, format_completion_message,
+        FIELD_ORDER
+    )
+    from src.chatbot.state import ExtractionResponse, OnboardingIntent
+
     user_id = state["user_id"]
     message = state["message"]
     user_context = state["user_context"]
@@ -201,188 +211,254 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
 
     try:
         # ========================================
-        # 1. 초기 데이터 로드
+        # 1. 현재 상태 로드
         # ========================================
-        # 온보딩 대화 히스토리 로드 (temp_data에서, 최근 3턴 = 6개 메시지)
+        current_metadata = user_context.metadata if user_context.metadata else UserMetadata()
+
+        # 첫 온보딩인 경우 환영 메시지 (conversation_states로 체크)
+        conv_state = await db.get_conversation_state(user_id)
+        has_onboarding_messages = False
+        if conv_state and conv_state.get("temp_data"):
+            has_onboarding_messages = "onboarding_messages" in conv_state["temp_data"]
+
+        is_first_onboarding = not has_onboarding_messages and all(getattr(current_metadata, field) is None for field in FIELD_ORDER)
+
+        if is_first_onboarding:
+            welcome_msg = format_welcome_message()
+            # 첫 질문 가져오기
+            first_template = get_field_template("name")
+            first_question = first_template.get_question(1)
+            ai_response = f"{welcome_msg}\n\n{first_question}"
+
+            # 메타데이터 초기화 (field_attempts, field_status 저장)
+            await save_onboarding_metadata(db, user_id, current_metadata)
+
+            # 대화 히스토리 저장 (이미 save_onboarding_metadata에서 temp_data 병합했으므로 다시 로드)
+            conv_state_updated = await db.get_conversation_state(user_id)
+            existing_temp_data = conv_state_updated.get("temp_data", {}) if conv_state_updated else {}
+            existing_temp_data["onboarding_messages"] = [{"role": "assistant", "content": ai_response}]
+
+            await db.upsert_conversation_state(
+                user_id,
+                current_step="onboarding",
+                temp_data=existing_temp_data
+            )
+
+            return Command(update={"ai_response": ai_response}, goto="__end__")
+
+        # ========================================
+        # 2. 다음 수집할 필드 결정
+        # ========================================
+        target_field = get_next_field(current_metadata.dict())
+
+        if not target_field:
+            # 모든 필드 완료
+            await complete_onboarding(db, user_id)
+            completion_msg = format_completion_message(current_metadata.name)
+            logger.info(f"[OnboardingAgent] ✅ 온보딩 완료! user={user_id}")
+            return Command(update={"ai_response": completion_msg}, goto="__end__")
+
+        # ========================================
+        # 3. 대화 히스토리 로드 + LLM으로 정보 추출
+        # ========================================
+        # temp_data에서 최근 대화 히스토리 가져오기
         conv_state = await db.get_conversation_state(user_id)
         recent_messages = []
-
         if conv_state and conv_state.get("temp_data"):
-            # temp_data에 저장된 온보딩 메시지 (최근 3턴)
-            recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]
-            logger.info(f"[OnboardingAgent] 온보딩 히스토리 로드: {len(recent_messages)}개 ({len(recent_messages)//2}턴)")
+            recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]  # 최근 3턴
 
-        # 프롬프트 구성
-        current_metadata = user_context.metadata if user_context.metadata else UserMetadata()
-        current_state = current_metadata.dict()
+        # 대화 히스토리 포맷팅
+        history_text = ""
+        if recent_messages:
+            for msg in recent_messages[-2:]:  # 최근 1턴만 (봇 질문 + 사용자 답변)
+                role = "봇" if msg["role"] == "assistant" else "사용자"
+                history_text += f"{role}: {msg['content']}\n"
 
-        # 🆕 현재 타겟 필드와 시도 횟수 정보 추가
-        FIELD_ORDER = ["name", "job_title", "total_years", "job_years", "career_goal",
-                       "project_name", "recent_work", "job_meaning", "important_thing"]
-
-        target_field = None
-        for field in FIELD_ORDER:
-            if not getattr(current_metadata, field):
-                if current_metadata.field_status.get(field) != "skipped":
-                    target_field = field
-                    break
-
-        current_attempt = current_metadata.field_attempts.get(target_field, 0) + 1 if target_field else 1
-
-        system_prompt = get_system_prompt()
-        user_prompt = format_user_prompt(
-            message, current_state, "", recent_messages,
-            target_field=target_field, current_attempt=current_attempt
+        field_description = FIELD_DESCRIPTIONS.get(target_field, "")
+        extraction_prompt = EXTRACTION_USER_PROMPT_TEMPLATE.format(
+            target_field=target_field,
+            field_description=field_description,
+            user_message=message[:300]  # 최대 300자
         )
 
-        print(f"🎯 [OnboardingAgent] target={target_field}, attempt={current_attempt}, message={message[:50]}")
-        print(f"📋 [OnboardingAgent] current_state: {current_state}")
-        logger.info(f"[OnboardingAgent] target={target_field}, attempt={current_attempt}, message={message[:50]}")
+        # 대화 히스토리를 포함한 프롬프트
+        full_prompt = f"""**대화 컨텍스트:**
+{history_text if history_text else "(첫 메시지)"}
 
-        # LLM 호출 (structured output)
-        response = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+{extraction_prompt}"""
+
+        # LLM 호출 (structured output - ExtractionResponse)
+        # llm 파라미터는 이미 OnboardingResponse로 설정되어 있으므로, 원본 LLM을 가져와야 함
+        from ..utils.models import get_onboarding_llm
+        base_llm = get_onboarding_llm()
+        extraction_llm = base_llm.with_structured_output(ExtractionResponse)
+
+        print(f"📤 [LLM 요청] 프롬프트:\n{full_prompt[:500]}...")
+        extraction_result = await extraction_llm.ainvoke([
+            SystemMessage(content=EXTRACTION_SYSTEM_PROMPT),
+            HumanMessage(content=full_prompt)
         ])
+        print(f"📥 [LLM 응답] type={type(extraction_result)}, value={extraction_result}")
 
-        # 🔍 LLM 응답 디버깅
-        if isinstance(response, OnboardingResponse):
-            print(f"🤖 [OnboardingAgent] LLM 응답:")
-            print(f"   - response: {response.response[:50]}...")
-            print(f"   - total_years: {response.total_years}")
-            print(f"   - job_years: {response.job_years}")
-            print(f"   - career_goal: {response.career_goal}")
+        if extraction_result is None:
+            print(f"⚠️ [LLM] None 반환 - 기본 처리")
+            ai_response = "죄송합니다. 잠시 문제가 발생했어요. 다시 한 번 말씀해주시겠어요?"
+            return Command(update={"ai_response": ai_response}, goto="__end__")
 
-            # 🔧 신입 처리: total_years가 "신입"이면 job_years도 자동으로 채우기
-            if response.total_years and "신입" in response.total_years:
-                if not response.job_years:
-                    response.job_years = response.total_years
-                    print(f"   ✅ job_years 자동 설정: {response.job_years}")
+        print(f"🤖 [LLM 추출 결과] intent={extraction_result.intent}, value={extraction_result.extracted_value}, confidence={extraction_result.confidence}")
 
-        # 정보 추출
-        updated_metadata = user_context.metadata.copy() if user_context.metadata else UserMetadata()
+        # ========================================
+        # 4. 추출 결과에 따른 처리
+        # ========================================
+        updated_metadata = current_metadata.copy()
+        current_attempt = updated_metadata.field_attempts.get(target_field, 0)
+        field_template = get_field_template(target_field)
+        user_name = updated_metadata.name  # 질문에 사용할 이름
 
-        # 🆕 현재 타겟 필드 결정 (최우선 null 필드)
-        FIELD_ORDER = ["name", "job_title", "total_years", "job_years", "career_goal",
-                       "project_name", "recent_work", "job_meaning", "important_thing"]
+        # field_attempts의 의미: 이 필드에서 몇 번 시도했는가
+        # 0 → 첫 시도 → 1차 질문 (get_question(1))
+        # 1 → 두 번째 시도 → 2차 질문 (get_question(2))
+        # 2 → 세 번째 시도 → 3차 질문 (get_question(3))
 
-        current_target_field = None
-        for field in FIELD_ORDER:
-            if not getattr(updated_metadata, field):
-                # skipped 필드는 건너뛰기
-                if updated_metadata.field_status.get(field) != "skipped":
-                    current_target_field = field
-                    break
+        if extraction_result.intent == OnboardingIntent.CLARIFICATION:
+            # 명확화 요청 - 시도 횟수 증가하고 더 자세한 질문 제공
+            updated_metadata.field_attempts[target_field] = current_attempt + 1
+            new_attempt = updated_metadata.field_attempts[target_field]
+            # 최대 3차 질문까지
+            ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
 
-        if isinstance(response, OnboardingResponse):
-            # 필드 업데이트
-            if response.name: updated_metadata.name = response.name
-            if response.job_title: updated_metadata.job_title = response.job_title
-            if response.total_years: updated_metadata.total_years = response.total_years
-            if response.job_years: updated_metadata.job_years = response.job_years
-            if response.career_goal: updated_metadata.career_goal = response.career_goal
-            if response.project_name: updated_metadata.project_name = response.project_name
-            if response.recent_work: updated_metadata.recent_work = response.recent_work
-            if response.job_meaning: updated_metadata.job_meaning = response.job_meaning
-            if response.important_thing: updated_metadata.important_thing = response.important_thing
+        elif extraction_result.intent == OnboardingIntent.INVALID:
+            # 무관한 응답 - 시도 횟수 증가 후 재질문 또는 스킵
+            updated_metadata.field_attempts[target_field] = current_attempt + 1
+            new_attempt = updated_metadata.field_attempts[target_field]
 
-            # 🆕 LLM이 판단한 field_status 병합
-            if response.field_status:
-                updated_metadata.field_status.update(response.field_status)
+            # 3회 이상 시도 시 스킵 처리
+            if new_attempt >= 3:
+                updated_metadata.field_status[target_field] = "insufficient"
+                setattr(updated_metadata, target_field, f"[SKIPPED] 응답 거부")
+                print(f"⚠️ [{target_field}] 3회 무관한 응답 - 스킵 처리")
 
-            # 🆕 현재 타겟 필드의 시도 횟수 증가 (명확화 요청이 아닐 때만)
-            if current_target_field:
-                if response.is_clarification_request:
-                    print(f"💬 [OnboardingAgent] 명확화 요청 감지 - 시도 횟수 유지 (field: {current_target_field})")
+                # 다음 필드로 이동
+                next_field = get_next_field(updated_metadata.dict())
+
+                if next_field:
+                    next_template = get_field_template(next_field)
+                    ai_response = next_template.get_question(1, name=updated_metadata.name)
                 else:
-                    # ✅ 원본 current_metadata에서 현재 시도 횟수 가져오기 (updated_metadata는 복사본이라 0으로 초기화됨)
-                    current_attempts = current_metadata.field_attempts.get(current_target_field, 0)
-                    updated_metadata.field_attempts[current_target_field] = current_attempts + 1
-                    print(f"📊 [OnboardingAgent] {current_target_field} 시도 횟수: {current_attempts} → {current_attempts + 1}")
+                    # 온보딩 완료
+                    await complete_onboarding(db, user_id)
+                    ai_response = format_completion_message(updated_metadata.name)
 
-                    # 3회 시도 후에도 null이면 스킵 (단, 유저의 마지막 답변은 보존)
-                    if current_attempts + 1 >= 3 and not getattr(updated_metadata, current_target_field):
-                        # 유저가 뭔가 말했다면 그것을 "INSUFFICIENT: {답변}" 형태로 저장
-                        user_raw_answer = message.strip()
-                        if user_raw_answer and user_raw_answer not in ["건너뛰기", "모름", "나중에", "skip"]:
-                            setattr(updated_metadata, current_target_field, f"[INSUFFICIENT] {user_raw_answer}")
-                            updated_metadata.field_status[current_target_field] = "insufficient"
-                        else:
-                            # 유저가 명시적으로 스킵 요청
-                            updated_metadata.field_status[current_target_field] = "skipped"
+                await save_onboarding_metadata(db, user_id, updated_metadata)
+                return Command(update={"ai_response": ai_response}, goto="__end__")
+            else:
+                # 재질문
+                print(f"⚠️ [{target_field}] 무관한 응답 ({new_attempt}/3회) - 재질문")
+                ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                await save_onboarding_metadata(db, user_id, updated_metadata)
+                return Command(update={"ai_response": ai_response}, goto="__end__")
 
-            ai_response = response.response
-        else:
-            ai_response = str(response)
+        elif extraction_result.intent == OnboardingIntent.ANSWER:
+            # 답변 제공됨
+            extracted_value = extraction_result.extracted_value
+            confidence = extraction_result.confidence
 
-        # Repository 함수로 메타데이터 저장 (users + conversation_states.temp_data 동시 저장)
+            # 신뢰도 체크: 0.5 미만이면 명확화 필요
+            if confidence < 0.5:
+                updated_metadata.field_attempts[target_field] = current_attempt + 1
+                new_attempt = updated_metadata.field_attempts[target_field]
+                print(f"⚠️ [{target_field}] 신뢰도 낮음 (conf={confidence:.2f}) - 명확화 요청")
+                ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                # 메타데이터 저장 후 종료
+                await save_onboarding_metadata(db, user_id, updated_metadata)
+                return Command(update={"ai_response": ai_response}, goto="__end__")
+
+            # 신입 특수 처리
+            if target_field == "total_years" and extracted_value and "신입" in extracted_value:
+                updated_metadata.total_years = "신입"
+                updated_metadata.job_years = "신입"
+                updated_metadata.field_status["total_years"] = "filled"
+                updated_metadata.field_status["job_years"] = "filled"
+                updated_metadata.field_attempts["total_years"] = current_attempt + 1
+                updated_metadata.field_attempts["job_years"] = 0  # job_years는 건너뛰었으므로 0
+                print(f"✅ [신입 감지] total_years, job_years 모두 '신입'으로 설정")
+
+                # career_goal로 이동
+                next_field = "career_goal"
+            else:
+                # 검증
+                if field_template.validate(extracted_value):
+                    setattr(updated_metadata, target_field, extracted_value)
+                    updated_metadata.field_status[target_field] = "filled"
+                    updated_metadata.field_attempts[target_field] = current_attempt + 1
+                    print(f"✅ [{target_field}] 값 저장: {extracted_value}")
+
+                    # 다음 필드
+                    next_field = get_next_field(updated_metadata.dict())
+                else:
+                    # 검증 실패
+                    updated_metadata.field_attempts[target_field] = current_attempt + 1
+                    print(f"❌ [{target_field}] 검증 실패: {extracted_value}")
+                    next_field = target_field  # 같은 필드 재시도
+
+            # 시도 횟수 체크 (3회 초과 시 스킵)
+            if updated_metadata.field_attempts.get(target_field, 0) >= 3:
+                updated_metadata.field_status[target_field] = "insufficient"
+                setattr(updated_metadata, target_field, f"[INSUFFICIENT] {extracted_value or message[:50]}")
+                next_field = get_next_field(updated_metadata.dict())
+
+            # 다음 질문 생성
+            if next_field == target_field:
+                # 같은 필드 재시도 (검증 실패 케이스)
+                next_attempt_count = updated_metadata.field_attempts.get(next_field, 0)
+                # attempts가 1이면 2차 질문, 2이면 3차 질문
+                next_question = field_template.get_question(min(next_attempt_count + 1, 3), name=user_name)
+                ai_response = next_question
+            elif next_field:
+                # 다른 필드로 이동 (성공 케이스)
+                next_template = get_field_template(next_field)
+                # 새 필드는 아직 시도 안 했으므로 1차 질문
+                # name이 방금 저장되었을 수 있으니 updated_metadata에서 다시 가져옴
+                next_question = next_template.get_question(1, name=updated_metadata.name)
+
+                # 간단한 확인 메시지 + 다음 질문
+                if getattr(updated_metadata, target_field):
+                    ai_response = f"{next_question}"
+                else:
+                    ai_response = next_question
+            else:
+                # 완료
+                await complete_onboarding(db, user_id)
+                ai_response = format_completion_message(current_metadata.name)
+
+        else:  # INVALID
+            # 무관한 내용 - 현재 필드 재질문
+            updated_metadata.field_attempts[target_field] = current_attempt + 1
+            new_attempt = updated_metadata.field_attempts[target_field]
+            # new_attempt가 1이면 2차 질문, 2이면 3차 질문
+            ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+
+        # ========================================
+        # 5. 메타데이터 저장
+        # ========================================
         await save_onboarding_metadata(db, user_id, updated_metadata)
+        print(f"✅ [OnboardingAgent] 메타데이터 저장 완료")
 
-        print(f"✅ [OnboardingAgent] 메타데이터 저장 완료 (Repository 함수)")
+        # 대화 히스토리 저장
+        conv_state = await db.get_conversation_state(user_id)
+        recent_messages = []
+        if conv_state and conv_state.get("temp_data"):
+            recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]
 
-        # 온보딩 대화 히스토리 업데이트 (최근 3턴만 유지)
-        onboarding_messages = recent_messages.copy()
-        onboarding_messages.append({"role": "user", "content": message})
-        onboarding_messages.append({"role": "assistant", "content": ai_response})
+        recent_messages.append({"role": "user", "content": message})
+        recent_messages.append({"role": "assistant", "content": ai_response})
+        recent_messages = recent_messages[-6:]  # 최근 3턴만 유지
 
-        # 최근 3턴(6개 메시지)만 유지
-        onboarding_messages = onboarding_messages[-6:]
-
-        # temp_data 업데이트
-        conv_state_updated = await db.get_conversation_state(user_id)
-        temp_data = conv_state_updated.get("temp_data", {}) if conv_state_updated else {}
-        temp_data["onboarding_messages"] = onboarding_messages
-
-        await db.upsert_conversation_state(user_id, current_step="onboarding", temp_data=temp_data)
-        logger.info(f"[OnboardingAgent] 대화 히스토리 저장: {len(onboarding_messages)//2}턴")
-
-        # 온보딩 완료 체크 (skipped/insufficient 모두 완료로 간주)
-        REQUIRED_FIELDS = ["name", "job_title", "total_years", "job_years", "career_goal",
-                          "project_name", "recent_work", "job_meaning", "important_thing"]
-
-        filled_or_handled = []
-        for field in REQUIRED_FIELDS:
-            value = getattr(updated_metadata, field)
-            status = updated_metadata.field_status.get(field)
-            # 값이 있거나, skipped/insufficient 상태면 완료로 간주
-            is_handled = value is not None or status in ["skipped", "insufficient"]
-            filled_or_handled.append(is_handled)
-
-        is_onboarding_complete = all(filled_or_handled)
-
-        # 이미 완료된 유저가 재진입한 경우 프롬프트가 처리하도록 넘김
-        was_already_complete = user_context.onboarding_stage == OnboardingStage.COMPLETED
-
-        # 온보딩 완료 시 특별 메시지 (이미 완료된 유저 제외 - 프롬프트가 재시작 요청 처리)
-        if is_onboarding_complete and not was_already_complete:
-            # Repository 함수로 온보딩 완료 처리
-            await complete_onboarding(db, user_id)
-            logger.info(f"[OnboardingAgent] ✅ onboarding_completed = True (Repository 함수)")
-
-            completion_message = f"""🎉 {updated_metadata.name}님, 온보딩이 완료되었어요!
-
-지금까지 공유해주신 소중한 이야기를 바탕으로, 앞으로 {updated_metadata.name}님의 커리어 여정을 함께하겠습니다.
-
-📝 일일 기록 시작하기
-
-이제부터는 매일 업무를 기록하며 성장을 돌아볼 수 있어요. 아래처럼 자유롭게 말씀해주세요:
-
-• "오늘은 ___를 했어요"
-• "오늘 어려웠던 점: ___"
-• "오늘 배운 점: ___"
-
-제가 {updated_metadata.name}님의 이야기를 듣고, 더 깊이 생각해볼 수 있는 질문들을 드릴게요.
-
-언제든 편하게 말씀해주세요!
-대시보드 링크: 추가추가!!!!"""
-
-            ai_response = completion_message
-            logger.info(f"[OnboardingAgent] 온보딩 완료! user={user_id}")
-
-        # 온보딩 완료 시 대화 히스토리 초기화 (일일기록은 깨끗한 상태로 시작)
-        # 온보딩 중에는 대화 턴을 저장하지 않음
-        # (완료 후 complete_onboarding()에서 자동 삭제되므로 불필요)
-        logger.info(f"[OnboardingAgent] 응답: {ai_response[:50]}... (대화 턴 저장 스킵)")
+        await db.upsert_conversation_state(
+            user_id,
+            current_step="onboarding",
+            temp_data={"onboarding_messages": recent_messages}
+        )
 
         return Command(update={"ai_response": ai_response}, goto="__end__")
 
@@ -391,9 +467,7 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
         import traceback
         traceback.print_exc()
 
-        fallback_response = "죄송합니다. 오류가 발생했습니다."
-        # 온보딩 중에는 대화 턴 저장하지 않음
-
+        fallback_response = "죄송합니다. 다시 말씀해주시겠어요?"
         return Command(update={"ai_response": fallback_response}, goto="__end__")
 
 

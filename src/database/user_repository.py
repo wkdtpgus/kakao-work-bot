@@ -178,14 +178,19 @@ async def save_onboarding_metadata(db, user_id: str, metadata: "UserMetadata") -
         if v is not None and k not in ["field_attempts", "field_status"]
     }
 
+    # users 테이블은 실제 데이터가 있을 때만 저장 (name 등 NOT NULL 제약 조건 때문)
     if db_data:
         await db.create_or_update_user(user_id, db_data)
 
-    # conversation_states.temp_data에 field_attempts, field_status 저장
-    temp_data = {
+    # conversation_states.temp_data에 field_attempts, field_status 저장 (기존 데이터 병합)
+    conv_state = await db.get_conversation_state(user_id)
+    existing_temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+
+    # 기존 temp_data에 field_attempts, field_status만 업데이트 (onboarding_messages 유지)
+    existing_temp_data.update({
         "field_attempts": metadata.field_attempts,
         "field_status": metadata.field_status
-    }
+    })
 
     logger.debug(f"[UserRepo] 저장할 field_attempts: {metadata.field_attempts}")
     logger.debug(f"[UserRepo] 저장할 field_status: {metadata.field_status}")
@@ -193,7 +198,7 @@ async def save_onboarding_metadata(db, user_id: str, metadata: "UserMetadata") -
     await db.upsert_conversation_state(
         user_id,
         current_step="onboarding",
-        temp_data=temp_data
+        temp_data=existing_temp_data
     )
 
 

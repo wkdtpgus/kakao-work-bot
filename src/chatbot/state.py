@@ -74,6 +74,22 @@ class UserContext(BaseModel):
     daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (대화 횟수 추적)
 
 
+class OnboardingIntent(str, Enum):
+    """온보딩 중 사용자 의도 분류"""
+    ANSWER = "answer"           # 질문에 답변함 (모든 답변 포함)
+    CLARIFICATION = "clarification"  # 질문의 의미를 모르겠음
+    INVALID = "invalid"         # 무관한 내용
+
+
+class ExtractionResponse(BaseModel):
+    """LLM의 정보 추출 결과 (응답 생성 X)"""
+    intent: OnboardingIntent
+    extracted_value: Optional[str] = None  # 추출된 값
+    confidence: float = Field(ge=0.0, le=1.0, default=0.0)  # 신뢰도
+    clarification_needed: bool = False  # 추가 확인 필요 여부
+    detected_field: Optional[str] = None  # 감지된 필드명 (순서 외 정보 제공 시)
+
+
 class UserIntent(str, Enum):
     """사용자 의도"""
     DAILY_RECORD = "daily_record"  # 일일 기록

@@ -2,48 +2,9 @@ import re
 import random
 import os
 from typing import List, Dict, Any
-from ..prompt.onboarding import ONBOARDING_SYSTEM_PROMPT, ONBOARDING_USER_PROMPT_TEMPLATE
 
-
-
-def get_system_prompt() -> str:
-    """시스템 프롬프트 반환"""
-    return ONBOARDING_SYSTEM_PROMPT
-
-
-def format_user_prompt(
-    message: str,
-    current_state: Dict,
-    conversation_summary: str = "",
-    conversation_history: List = None,
-    target_field: str = None,
-    current_attempt: int = 1
-) -> str:
-    """유저 프롬프트 포맷팅 (온보딩용 + 대화 컨텍스트)"""
-    import json
-
-    # current_state를 JSON 문자열로 변환
-    current_state_json = json.dumps(current_state, ensure_ascii=False, indent=2)
-
-    # 대화 히스토리 포맷팅
-    formatted_history = _format_history(conversation_history) if conversation_history else "No previous conversation yet."
-
-    # 요약 처리
-    summary_text = conversation_summary if conversation_summary else "No summary yet (early conversation)."
-
-    # 🆕 타겟 필드 정보
-    target_info = f"Current target field: {target_field} (Attempt #{current_attempt})" if target_field else "All fields collected or skipped."
-
-    # 템플릿에 모든 필드 전달
-    formatted = ONBOARDING_USER_PROMPT_TEMPLATE.format(
-        conversation_summary=summary_text,
-        conversation_history=formatted_history,
-        current_state=current_state_json,
-        user_message=message[:300],  # 메시지 길이 제한
-        target_field_info=target_info
-    )
-
-    return formatted
+# 주의: get_system_prompt, format_user_prompt 함수는 더 이상 사용되지 않음
+# 새로운 온보딩 방식은 nodes.py에서 직접 EXTRACTION_SYSTEM_PROMPT를 사용함
 
 
 def _format_history(history: List[Dict]) -> str:
