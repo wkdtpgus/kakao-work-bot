@@ -732,7 +732,8 @@ class Database:
                 "get_turns_by_date",
                 {
                     "p_kakao_user_id": user_id,
-                    "p_session_date": date
+                    "p_session_date": date,
+                    "p_limit": limit  # ✅ limit 파라미터 전달
                 }
             ).execute()
 

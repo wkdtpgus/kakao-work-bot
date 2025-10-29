@@ -2,15 +2,16 @@
 그래프 관리 모듈 - 유저별 워크플로우 관리
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Any
 import logging
+from datetime import datetime
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
 from .workflow import build_workflow_graph
 from ..utils.models import get_chat_llm, get_onboarding_llm
 from ..utils.utils import simple_text_response, error_response
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
+from ..database.user_repository import get_user_with_context
 from langchain_google_vertexai import ChatVertexAI
 import os
 
@@ -18,12 +19,11 @@ logger = logging.getLogger(__name__)
 
 
 class GraphManager:
-    """유저별 그래프 인스턴스 관리"""
+    """유저별 그래프 인스턴스 및 요청 내 캐시 관리"""
 
     def __init__(self, database):
         self.db = database
         self.user_graphs: Dict[str, CompiledStateGraph] = {}
-        self.memory_savers: Dict[str, MemorySaver] = {}
         self.graph_types: Dict[str, CompiledStateGraph] = {}
 
     async def init_all_graphs(self):
@@ -49,16 +49,12 @@ class GraphManager:
         user_graph_key = f"{user_id}_{graph_type}"
 
         if user_graph_key not in self.user_graphs:
-            # 유저별 MemorySaver 생성
-            memory_saver = MemorySaver()
-            self.memory_savers[user_graph_key] = memory_saver
-
             # 베이스 그래프를 복사하여 유저별 그래프 생성
             base_graph = self.graph_types.get(graph_type)
             if not base_graph:
                 raise ValueError(f"지원하지 않는 그래프 타입: {graph_type}")
 
-            # 메모리 세이버와 함께 새로운 그래프 컴파일
+            # 새로운 그래프 컴파일 (카카오톡은 stateless이므로 checkpointer 불필요)
             if graph_type == "main":
                 # 온보딩용 LLM (캐시됨)
                 onboarding_llm = get_onboarding_llm().with_structured_output(OnboardingResponse)
@@ -87,10 +83,6 @@ class GraphManager:
             del self.user_graphs[user_graph_key]
             logger.info(f"유저 그래프 삭제: {user_id} ({graph_type})")
 
-        if user_graph_key in self.memory_savers:
-            del self.memory_savers[user_graph_key]
-            logger.info(f"유저 메모리 삭제: {user_id} ({graph_type})")
-
     def reset_all_user_graphs(self, user_id: str) -> None:
         """특정 유저의 모든 그래프 초기화"""
         keys_to_delete = []
@@ -104,8 +96,6 @@ class GraphManager:
         for key in keys_to_delete:
             if key in self.user_graphs:
                 del self.user_graphs[key]
-            if key in self.memory_savers:
-                del self.memory_savers[key]
 
         logger.info(f"유저의 모든 그래프 삭제: {user_id}")
 
@@ -127,6 +117,41 @@ class GraphManager:
 
         stats["total_users"] = len(set(key.split("_")[0] for key in self.user_graphs.keys()))
         return stats
+
+    async def load_request_cache(
+        self,
+        user_id: str
+    ) -> Tuple[UserContext, Optional[Dict[str, Any]], list]:
+        """요청 초기화 시 필요한 캐시 데이터 로드
+
+        한 요청 내에서 router → service_router → daily_agent로 전달되는 캐시:
+        - user_context: 사용자 메타데이터 + 온보딩 상태
+        - conv_state: conversation_states 테이블 데이터
+        - today_turns: 오늘 대화 히스토리 (최근 3턴, 요약 시에만 전체 조회)
+
+        Args:
+            user_id: 카카오 사용자 ID
+
+        Returns:
+            (user_context, conv_state, today_turns)
+        """
+        # 사용자 정보 + UserContext 로드
+        user, user_context = await get_user_with_context(self.db, user_id)
+
+        # conversation_state 조회
+        conv_state = await self.db.get_conversation_state(user_id)
+
+        # 오늘 대화 히스토리 조회 (최근 3턴만, 요약 생성 시 전체 재조회)
+        today = datetime.now().date().isoformat()
+        today_turns = await self.db.get_conversation_history_by_date_v2(user_id, today, limit=3)
+
+        logger.info(
+            f"[GraphManager] 캐시 로드 완료 - "
+            f"onboarding={user_context.onboarding_stage}, "
+            f"today_turns={len(today_turns)}턴"
+        )
+
+        return user_context, conv_state, today_turns
 
 
 class ChatBotManager:
@@ -152,16 +177,21 @@ class ChatBotManager:
             # ✅ 캐싱된 그래프 가져오기 (없으면 생성)
             graph = self.graph_manager.get_or_create_user_graph(user_id, graph_type="main")
 
-            # 초기 상태 구성
+            # ✅ 요청 캐시 데이터 로드 (DB 쿼리 1회로 모든 필요 데이터 확보)
+            user_context, conv_state, today_turns = await self.graph_manager.load_request_cache(user_id)
+
+            # 초기 상태 구성 (캐시 데이터 포함)
             initial_state = OverallState(
                 user_id=user_id,
                 message=message,
-                user_context=None,  # router에서 로드
+                user_context=user_context,  # ✅ 미리 로드된 컨텍스트
                 user_intent=None,   # service_router에서 결정
                 ai_response="",
                 conversation_history=[],
                 conversation_summary="",
-                action_hint=action_hint  # 카카오톡 버튼 힌트
+                action_hint=action_hint,  # 카카오톡 버튼 힌트
+                cached_conv_state=conv_state,  # ✅ 캐시된 대화 상태
+                cached_today_turns=today_turns  # ✅ 캐시된 오늘 대화 (최근 3턴)
             )
 
             # 워크플로우 실행

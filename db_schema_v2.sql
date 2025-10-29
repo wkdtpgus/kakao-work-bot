@@ -214,10 +214,11 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION get_recent_turns(TEXT, INTEGER)
 IS '최근 N개 턴 조회 (user-ai 쌍으로 반환)';
 
--- 5-2. 특정 날짜의 대화 턴 조회
+-- 5-2. 특정 날짜의 대화 턴 조회 (limit 지원)
 CREATE OR REPLACE FUNCTION get_turns_by_date(
     p_kakao_user_id TEXT,
-    p_session_date DATE
+    p_session_date DATE,
+    p_limit INTEGER DEFAULT 50  -- ✅ limit 파라미터 추가
 )
 RETURNS TABLE (
     turn_index INTEGER,
@@ -237,12 +238,13 @@ BEGIN
     JOIN ai_answer_messages am ON mh.ai_answer_key = am.uuid
     WHERE mh.kakao_user_id = p_kakao_user_id
       AND mh.session_date = p_session_date
-    ORDER BY mh.turn_index ASC;
+    ORDER BY mh.created_at DESC  -- ✅ 최신순 정렬 (최근 N개 가져오기 위해)
+    LIMIT p_limit;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION get_turns_by_date(TEXT, DATE)
-IS '특정 날짜의 대화 턴 조회';
+COMMENT ON FUNCTION get_turns_by_date(TEXT, DATE, INTEGER)
+IS '특정 날짜의 대화 턴 조회 (최신순, limit 지원)';
 
 -- ============================================
 -- 6. 유용한 뷰 (View)
