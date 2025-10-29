@@ -3,7 +3,7 @@
 DB 접근 로직 없음 - Repository에서 준비한 데이터를 받아서 LLM 호출만 수행
 """
 from langchain_core.messages import SystemMessage, HumanMessage
-from ..prompt.weekly_summary_prompt import WEEKLY_AGENT_SYSTEM_PROMPT
+from ..prompt.weekly_summary_prompt import WEEKLY_AGENT_SYSTEM_PROMPT, WEEKLY_AGENT_USER_PROMPT
 from .schemas import WeeklyFeedbackInput, WeeklyFeedbackOutput
 from langsmith import traceable
 import logging
@@ -28,8 +28,11 @@ async def generate_weekly_feedback(
     try:
         logger.info(f"[WeeklyFeedback] 주간 피드백 생성 시작")
 
-        # 주간 피드백 프롬프트 구성
-        system_prompt = WEEKLY_AGENT_SYSTEM_PROMPT.format(
+        # 주간 피드백 프롬프트 구성 (system prompt는 포맷 없이 그대로 사용)
+        system_prompt = WEEKLY_AGENT_SYSTEM_PROMPT
+
+        # user prompt에 데이터 주입
+        user_prompt = WEEKLY_AGENT_USER_PROMPT.format(
             name=input_data.user_metadata.name,
             job_title=input_data.user_metadata.job_title,
             career_goal=input_data.user_metadata.career_goal,
@@ -39,7 +42,7 @@ async def generate_weekly_feedback(
         # LLM 호출
         response = await llm.ainvoke([
             SystemMessage(content=system_prompt),
-            HumanMessage(content="위 대화 내용을 바탕으로 주간 피드백을 작성해주세요.")
+            HumanMessage(content=user_prompt)
         ])
 
         weekly_feedback = response.content.strip()

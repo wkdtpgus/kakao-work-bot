@@ -80,7 +80,7 @@ FIELD_TEMPLATES: Dict[str, FieldTemplate] = {
 
     "job_title": FieldTemplate(
         field_name="job_title",
-        first_attempt="{name}님, 현재 어떤 일을 하고 계신가요? 직무나 직책을 알려주세요.\n예: '백엔드 개발자', 'UX 디자이너', '프로덕트 매니저', '퍼포먼스 마케터'",
+        first_attempt="좋아요 {name}님, 현재 어떤 일을 하고 계신가요? 직무나 직책을 알려주세요.\n예: '백엔드 개발자', 'UX 디자이너', '프로덕트 매니저', '퍼포먼스 마케터'",
         second_attempt="직무를 더 구체적으로 알려주시면 좋겠어요.\n예: '백엔드 개발자', 'UX 디자이너', '프로덕트 매니저', '퍼포먼스 마케터'",
         third_attempt="{name}님, 아래 예시처럼 직접 입력해주세요:\n예: '백엔드 개발자', 'UX 디자이너', '프로덕트 매니저', '퍼포먼스 마케터'\n💡 건너뛰려면 '건너뛰기'라고 말해주세요.",
         validation=lambda x: len(x.strip()) >= 2 and not x.strip().isdigit()
@@ -96,7 +96,7 @@ FIELD_TEMPLATES: Dict[str, FieldTemplate] = {
 
     "job_years": FieldTemplate(
         field_name="job_years",
-        first_attempt="{name}님의 현재 직무 경력은 얼마나 되시나요? 직무 전환 케이스를 고려한 질문이에요.\n예: '2년', '6개월', '신입'",
+        first_attempt="그러면 {name}님의 현재 직무 경력은 얼마나 되시나요? 직무 전환 케이스를 고려한 질문이에요.\n예: '2년', '6개월', '신입'",
         second_attempt="{name}님, 현재 직무 경력을 다시 알려주세요.\n예: '2년', '6개월', '신입'",
         third_attempt="{name}님, 현재 직무 경력을 다음 예시처럼 입력해주세요:\n예: '2년', '6개월', '신입'\n💡 건너뛰려면 '건너뛰기'라고 말해주세요.",
         validation=validate_years

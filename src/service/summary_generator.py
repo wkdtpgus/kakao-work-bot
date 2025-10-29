@@ -45,18 +45,22 @@ async def generate_daily_summary(
         if input_data.user_correction:
             correction_instruction = f"""
 
-# 🚨 중요 - 사용자 수정 요청
-사용자가 다음과 같이 수정을 요청했습니다:
+# USER CORRECTION REQUEST
+The user requested the following changes:
 "{input_data.user_correction}"
 
-이 수정 요청을 반드시 반영해야 합니다:
-- 사용자가 부정한 내용(예: "~안했어", "~아니야")은 요약에서 완전히 제외
-- 사용자가 추가 요청한 내용은 반드시 포함
-- 사용자가 수정 요청한 표현은 정확히 반영
+CRITICAL RULES for corrections:
+- ONLY use information from the conversation_turns provided in the USER_DATA section
+- If the user denied something (e.g., "안했어", "그거 아니야"), COMPLETELY remove that topic
+- If the user requested to ADD something, search ONLY in today's conversation_turns for that content
+- If the requested content exists in today's conversation, add it to the summary
+- If the requested content does NOT appear anywhere in today's conversation_turns, respond: "죄송합니다. 오늘 대화에서 해당 내용을 찾을 수 없습니다. 오늘 대화하신 내용만 요약에 포함할 수 있어요."
+- DO NOT use information from previous days or your general knowledge
+- ONLY summarize what the user explicitly said in today's conversation
 
-**중요: 수정 후에도 Markdown 문법과 bullet 포인트 절대 사용 금지**
-- 일반 텍스트로만 작성
-- 제목, 볼드체, 이탤릭, 불릿 포인트 사용 모두 금지"""
+CRITICAL: Even after corrections, you MUST NOT use Markdown syntax
+- Use plain text only
+- NO bold, italics, headers, or bullet points"""
             system_prompt = system_prompt + correction_instruction
 
         # LLM 호출
