@@ -51,6 +51,7 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
     try:
         # Repository 함수로 사용자 정보 + UserContext 한 번에 로드
         user, user_context = await get_user_with_context(db, user_id)
+        logger.info(f"[RouterNode] user_context.onboarding_stage={user_context.onboarding_stage}")
 
         # conversation_state 조회 (캐싱용)
         conv_state = await db.get_conversation_state(user_id)
@@ -427,9 +428,15 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 else:
                     ai_response = next_question
             else:
-                # 완료
+                # 완료 - 마지막 필드까지 저장 후 온보딩 완료 처리
+                print(f"💾 [OnboardingAgent] 온보딩 완료 - save_onboarding_metadata 호출 전")
+                print(f"💾 [OnboardingAgent] updated_metadata.important_thing = {updated_metadata.important_thing}")
+                await save_onboarding_metadata(db, user_id, updated_metadata)
+                print(f"💾 [OnboardingAgent] save_onboarding_metadata 완료")
                 await complete_onboarding(db, user_id)
-                ai_response = format_completion_message(current_metadata.name)
+                ai_response = format_completion_message(updated_metadata.name)
+                print(f"✅✅✅ [OnboardingAgent] 🎉🎉🎉 온보딩 완료 (NEW CODE), onboarding_messages 삭제됨")
+                return Command(update={"ai_response": ai_response}, goto="__end__")
 
         else:  # INVALID
             # 무관한 내용 - 현재 필드 재질문
@@ -439,12 +446,12 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
 
         # ========================================
-        # 5. 메타데이터 저장
+        # 5. 메타데이터 저장 (온보딩 진행 중만)
         # ========================================
         await save_onboarding_metadata(db, user_id, updated_metadata)
         print(f"✅ [OnboardingAgent] 메타데이터 저장 완료")
 
-        # 대화 히스토리 저장
+        # 대화 히스토리 저장 (온보딩 진행 중만)
         conv_state = await db.get_conversation_state(user_id)
         recent_messages = []
         if conv_state and conv_state.get("temp_data"):

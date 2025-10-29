@@ -86,28 +86,21 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[Dict[str, An
         else:
             logger.info(f"[UserRepo] 세션 리셋 (대화 히스토리 없음)")
 
-    # 온보딩 완료 체크
-    is_complete = all([
-        metadata.name,
-        metadata.job_title,
-        metadata.total_years,
-        metadata.job_years,
-        metadata.career_goal,
-        metadata.project_name,
-        metadata.recent_work,
-        metadata.job_meaning,
-        metadata.important_thing
-    ])
+    # 온보딩 완료 체크 - onboarding_completed 플래그 기반 (필드 체크 제거)
+    # complete_onboarding()에서 설정한 플래그를 신뢰
+    onboarding_completed = user.get("onboarding_completed", False)
 
     user_context = UserContext(
         user_id=user_id,
-        onboarding_stage=OnboardingStage.COMPLETED if is_complete else OnboardingStage.COLLECTING_BASIC,
+        onboarding_stage=OnboardingStage.COMPLETED if onboarding_completed else OnboardingStage.COLLECTING_BASIC,
         metadata=metadata,
         attendance_count=user.get("attendance_count", 0),
         daily_record_count=user.get("daily_record_count", 0),
         last_record_date=user.get("last_record_date"),
         daily_session_data=daily_session_data
     )
+
+    logger.info(f"[UserRepo] onboarding_completed={onboarding_completed}, stage={user_context.onboarding_stage}")
 
     return user, user_context
 
@@ -177,6 +170,9 @@ async def save_onboarding_metadata(db, user_id: str, metadata: "UserMetadata") -
         k: v for k, v in metadata.dict().items()
         if v is not None and k not in ["field_attempts", "field_status"]
     }
+
+    logger.info(f"[UserRepo] save_onboarding_metadata - metadata.dict(): {metadata.dict()}")
+    logger.info(f"[UserRepo] save_onboarding_metadata - db_data: {db_data}")
 
     # users 테이블은 실제 데이터가 있을 때만 저장 (name 등 NOT NULL 제약 조건 때문)
     if db_data:
