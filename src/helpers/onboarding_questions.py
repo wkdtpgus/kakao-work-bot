@@ -171,17 +171,52 @@ def get_next_field(metadata: dict) -> Optional[str]:
     return None
 
 
+def get_progress_indicator(metadata: dict) -> str:
+    """온보딩 진행률 표시 (예: "3/9 질문 완료")
+
+    Args:
+        metadata: 현재 메타데이터
+
+    Returns:
+        진행률 문자열 (예: "📊 3/9 질문 완료 | 🎯 6개 남음")
+    """
+    completed_count = sum(1 for field in FIELD_ORDER if metadata.get(field) is not None)
+    total_count = len(FIELD_ORDER)
+    remaining = total_count - completed_count
+
+    if remaining > 0:
+        return f"📊 {completed_count}/{total_count} 질문 완료 | 🎯 {remaining}개 남음"
+    else:
+        return f"✅ {total_count}/{total_count} 질문 완료!"
+
+
 def format_welcome_message(name: Optional[str] = None) -> str:
     """첫 온보딩 시작 메시지"""
     if name:
-        return f"반가워요, {name}님! 앞으로 커리어를 함께 기록하고 돌아볼 수 있도록 도와드릴게요. 먼저 몇 가지 질문에 답해주시면, 맞춤형 피드백을 드릴 수 있어요."
+        return f"반가워요, {name}님! 커리어 여정을 함께 만들어가는 <3분커리어>입니다. 먼저 몇 가지 질문에 답해주시면, 맞춤형 피드백을 드릴 수 있어요."
     else:
-        return "안녕하세요! 반가워요. 커리어를 기록하고 돌아보는 시간을 함께 만들어가는 <3분커리어>입니다. 시작하기 전에 몇 가지만 여쭤볼게요."
+        return "안녕하세요! 반가워요. 커리어 여정을 함께 만들어가는 <3분커리어>입니다. 먼저 몇 가지 질문에 답해주시면, 맞춤형 피드백을 드릴 수 있어요."
 
 
 def format_completion_message(name: Optional[str] = None) -> str:
     """온보딩 완료 메시지"""
     if name:
-        return f"좋아요, {name}님! 🎉\n이제 본격적으로 커리어 기록을 시작할 수 있어요. 언제든 오늘의 경험을 남기거나, 지난 주를 돌아볼 수 있습니다. 커리어 여정을 함께 기록해볼까요?\n\n아래 대시보드에서 자세한 작성 템플릿과 가이드를 확인할 수 있어요! \n[대시보드 링크]"
+        message = f"""축하합니다, {name}님! 🎉 온보딩이 완료되었어요.
+
+📝 다음 단계:
+• 내일부터는 '3분커리어 시작'을 입력해 일일기록을 시작해주세요.
+• 아래 대시보드에서 자세한 작성 템플릿과 가이드를 확인할 수 있어요!
+[대시보드 링크]
+
+그럼 내일 만나요!"""
     else:
-        return "좋아요! 🎉\n준비가 완료되었어요. 이제 본격적으로 커리어 기록을 시작할 수 있어요. 언제든 오늘의 경험을 남기거나, 지난 주를 돌아볼 수 있습니다. 커리어 여정을 함께 기록해볼까요?\n\n아래 대시보드에서 자세한 작성 템플릿과 가이드를 확인할 수 있어요! \n[대시보드 링크]"
+        message = """축하합니다! 🎉 온보딩이 완료되었어요.
+
+📝 다음 단계:
+• 내일부터는 '3분커리어 시작'을 입력해 일일기록을 시작해주세요.
+• 아래 대시보드에서 자세한 작성 템플릿과 가이드를 확인할 수 있어요!
+[대시보드 링크]
+
+그럼 내일 만나요!"""
+
+    return message

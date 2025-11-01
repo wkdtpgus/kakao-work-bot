@@ -338,8 +338,8 @@ class Database:
             int: 업데이트된 attendance_count
 
         로직:
-            - daily_record_count가 정확히 5일 때만 호출됨 (nodes.py에서 제어)
-            - 호출되면 무조건 +1 증가 (중복 체크는 nodes.py의 "== 5" 조건이 자동으로 방지)
+            - daily_record_count가 정확히 3일 때만 호출됨 (nodes.py에서 제어)
+            - 호출되면 무조건 +1 증가 (중복 체크는 nodes.py의 "== 3" 조건이 자동으로 방지)
         """
         try:
             user = await self.get_user(user_id)
@@ -350,12 +350,12 @@ class Database:
 
             current_count = user.get("attendance_count", 0)
 
-            # 안전장치: 5회 미만이면 증가 안 함
-            if daily_record_count < 5:
-                print(f"⏳ [DB] 대화 턴 부족 (현재 {daily_record_count}회, 5회 필요): {user_id}")
+            # 안전장치: 3회 미만이면 증가 안 함
+            if daily_record_count < 3:
+                print(f"⏳ [DB] 대화 턴 부족 (현재 {daily_record_count}회, 3회 필요): {user_id}")
                 return current_count
 
-            # 5회 달성 → 카운트 증가
+            # 3회 달성 → 카운트 증가
             new_count = current_count + 1
             await self.create_or_update_user(user_id, {
                 "attendance_count": new_count

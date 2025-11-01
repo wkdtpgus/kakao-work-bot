@@ -3,7 +3,7 @@
 DB 접근 로직 없음 - Repository에서 준비한 데이터를 받아서 LLM 호출만 수행
 """
 from langchain_core.messages import SystemMessage, HumanMessage
-from ..prompt.weekly_summary_prompt import WEEKLY_AGENT_SYSTEM_PROMPT, WEEKLY_AGENT_USER_PROMPT
+from ..prompt.weekly_summary import WEEKLY_AGENT_SYSTEM_PROMPT, WEEKLY_AGENT_USER_PROMPT
 from .schemas import WeeklyFeedbackInput, WeeklyFeedbackOutput
 from langsmith import traceable
 import logging

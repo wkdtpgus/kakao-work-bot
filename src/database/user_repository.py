@@ -132,7 +132,7 @@ async def check_and_reset_daily_count(db, user_id: str) -> Tuple[int, bool]:
 
 
 async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[int]]:
-    """daily_record_count 증가 및 5회 달성 시 attendance_count 증가
+    """daily_record_count 증가 및 3회 달성 시 attendance_count 증가
 
     Args:
         db: Database 인스턴스
@@ -141,17 +141,17 @@ async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[i
     Returns:
         (new_daily_count, new_attendance_count):
             - new_daily_count: 증가된 daily_record_count
-            - new_attendance_count: 5회 달성 시 증가된 attendance_count, 아니면 None
+            - new_attendance_count: 3회 달성 시 증가된 attendance_count, 아니면 None
     """
     # daily_record_count 증가
     new_daily_count = await db.increment_daily_record_count(user_id)
 
-    # 5회가 되는 순간 attendance_count 증가
-    if new_daily_count == 5:
+    # 3회가 되는 순간 attendance_count 증가
+    if new_daily_count == 3:
         user = await db.get_user(user_id)
         current_attendance = user.get("attendance_count", 0) if user else 0
         new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
-        logger.info(f"[UserRepo] 🎉 5회 달성! attendance: {current_attendance} → {new_attendance}일차")
+        logger.info(f"[UserRepo] 🎉 3회 달성! attendance: {current_attendance} → {new_attendance}일차")
         return new_daily_count, new_attendance
 
     return new_daily_count, None
@@ -225,8 +225,8 @@ async def complete_onboarding(db, user_id: str) -> None:
         temp_data.pop("field_status", None)
         temp_data.pop("question_turn", None)
 
-        await db.upsert_conversation_state(user_id, current_step="completed", temp_data=temp_data)
-        logger.info(f"[UserRepo] 🗑️ temp_data 온보딩 컨텍스트 삭제 완료")
+        await db.upsert_conversation_state(user_id, current_step="conversation_ended", temp_data=temp_data)
+        logger.info(f"[UserRepo] 🗑️ temp_data 온보딩 컨텍스트 삭제 완료 → current_step=conversation_ended")
 
     # 3. DB 온보딩 대화 턴 삭제 (혹시 저장된 경우 대비, V2 스키마)
     try:

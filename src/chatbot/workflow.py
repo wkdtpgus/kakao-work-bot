@@ -1,52 +1,45 @@
 """
-LangGraph 멀티 스텝 워크플로우
+LangGraph 워크플로우 - AgentExecutor 기반 통합 아키텍처
 """
 
 from functools import partial
 from langgraph.graph import StateGraph
 from .state import OverallState
-from . import nodes
+from .agent_node import unified_agent_node
 
 
 def build_workflow_graph(db, onboarding_llm, service_llm) -> StateGraph:
-    """멀티 스텝 워크플로우 그래프 구성
+    """통합 에이전트 워크플로우 그래프 구성
 
-    Flow:
-    START → router_node
-      ├─ onboarding_agent_node → END
-      └─ service_router_node
-          ├─ daily_agent_node
-          │   ├─ (일반) → END
-          │   └─ (7일차) → weekly_agent_node → END
-          └─ weekly_agent_node → END
+    New Architecture:
+    START → unified_agent_node → END
+
+    unified_agent_node가 LLM Tool Calling으로 적절한 툴을 선택:
+    - OnboardingTool: 온보딩 처리
+    - DailyConversationTool: 일일 대화
+    - DailySummaryTool: 일일 요약 생성
+    - EditSummaryTool: 요약 수정
+    - WeeklySummaryTool: 주간 피드백 생성
     """
 
     # StateGraph 생성
     workflow = StateGraph(OverallState)
 
-    # 노드 추가 (memory_manager 제거, database 직접 사용)
-    workflow.add_node("router_node",
-                     partial(nodes.router_node, db=db))
-
-    workflow.add_node("service_router_node",
-                     partial(nodes.service_router_node, llm=service_llm, db=db))
-
-    workflow.add_node("onboarding_agent_node",
-                     partial(nodes.onboarding_agent_node, db=db, llm=onboarding_llm))
-
-    workflow.add_node("daily_agent_node",
-                     partial(nodes.daily_agent_node, db=db))
-
-    workflow.add_node("weekly_agent_node",
-                     partial(nodes.weekly_agent_node, db=db))
+    # 통합 에이전트 노드 추가
+    workflow.add_node(
+        "unified_agent_node",
+        partial(
+            unified_agent_node,
+            db=db,
+            onboarding_llm=onboarding_llm,
+            service_llm=service_llm
+        )
+    )
 
     # 시작점 설정
-    workflow.set_entry_point("router_node")
+    workflow.set_entry_point("unified_agent_node")
 
-    # 엣지는 Command의 goto로 자동 처리
-    # router_node → onboarding_agent_node OR service_router_node
-    # service_router_node → daily_agent_node OR weekly_agent_node
-    # 각 agent 노드 → END
+    # unified_agent_node → END (Command의 goto로 처리)
 
     return workflow.compile()
 

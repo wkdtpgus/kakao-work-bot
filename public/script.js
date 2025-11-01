@@ -1,5 +1,5 @@
 // 전역 변수
-let currentUserId = '2871c5895ca869ade588bd23a20e7842c52acb03053fbc6e77f757a681a0732475'; //`test_user_${Date.now()}`;
+let currentUserId = '2871c5895ca869ade588bd23a20e7842c52acb03053fbc6e77f757a681a0732475';//`test_user_${Date.now()}`;//
 let conversationHistory = [];
 let isTyping = false;
 
@@ -76,6 +76,8 @@ async function sendMessage() {
   showTypingIndicator();
 
   try {
+    console.log("🚀 메시지 전송 시작:", message);
+
     // API 호출
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -88,19 +90,34 @@ async function sendMessage() {
       }),
     });
 
+    console.log("📡 응답 상태:", response.status, response.statusText);
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
+    console.log("📥 서버 응답 (전체):", data);
+    console.log("📥 응답 구조 체크:", {
+      hasTemplate: !!data.template,
+      hasOutputs: data.template?.outputs,
+      firstOutput: data.template?.outputs?.[0],
+      simpleText: data.template?.outputs?.[0]?.simpleText,
+      text: data.template?.outputs?.[0]?.simpleText?.text
+    });
 
     // 타이핑 인디케이터 제거
+    console.log("⏳ 타이핑 인디케이터 제거 중...");
     hideTypingIndicator();
 
     // 봇 응답 표시
-    if (data.template && data.template.outputs) {
+    if (data.template && data.template.outputs && data.template.outputs[0]?.simpleText?.text) {
       const botMessage = data.template.outputs[0].simpleText.text;
+      console.log("✅ 봇 메시지 추출 성공:", botMessage.substring(0, 100));
+
+      console.log("💬 메시지 추가 중...");
       addMessage(botMessage, "bot");
+      console.log("✅ 메시지 추가 완료");
 
       // 대화 히스토리 업데이트
       conversationHistory.push({ role: "user", content: message });
@@ -110,16 +127,19 @@ async function sendMessage() {
       // API 로그 업데이트
       updateApiLogs(data);
     } else {
+      console.error("❌ 응답 형식 오류:", data);
       addMessage("죄송합니다. 응답을 처리하는 중 오류가 발생했습니다.", "bot");
     }
   } catch (error) {
-    console.error("Error:", error);
+    console.error("❌ 오류 발생:", error);
+    console.error("❌ 오류 스택:", error.stack);
     hideTypingIndicator();
     addMessage(
       "서버와의 통신 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
       "bot"
     );
   } finally {
+    console.log("🏁 메시지 처리 완료");
     setInputState(true);
   }
 }

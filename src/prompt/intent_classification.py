@@ -8,7 +8,7 @@ INTENT_CLASSIFICATION_USER_PROMPT = """User message: "{message}"
 
 Classify the user's intent into one of the following:
 - summary: User wants to generate/create a daily summary OR accepts bot's summary generation suggestion 
-  (e.g., "응", "네", "그래", "좋아", "알겠어", "알겠다고", "ㅇㅇ", "ㅇㅋ", "okay", "yes", "정리해줘", "요약해줘")
+  (e.g., "응", "네", "그래", "좋아", "알겠어", "알겠다고", "ㅇㅇ", "ㅇㅋ", "okay", "yes", "정리해", "요약해줘", "부탁해")
 - edit_summary: User wants to edit/modify the JUST CREATED summary with SPECIFIC changes 
   (e.g., "수정해줘", "다시 생성해줘", "[내용]도 기록해줘", "[내용] 빠졌어", "이건 틀렸어")
 - no_edit_needed: User indicates NO edits are needed AFTER summary was already created 
@@ -23,7 +23,10 @@ Classify the user's intent into one of the following:
 
 IMPORTANT:
 - If unsure, default to "continue"
-- **CRITICAL - Context-based classification for short responses ("응", "네", "그래", "알겠어", "알겠다고" etc.)**:
+- **Typo & Colloquial Tolerance**: Handle typos, slang, and colloquial expressions by inferring meaning from context
+  - Examples: "정리해보라니가" → "정리해봐" (summary acceptance), "요약ㄱㄱ" → "요약해줘" (summary)
+  - Focus on semantic intent, not exact wording
+- **CRITICAL - Context-based classification for short responses ("응", "네", "그래", "알겠어", "알겠다고", "부탁해" etc.)**:
   - If bot asked "정리해드릴까요?" / "요약해드릴까요?" / "내용을 정리해드릴까요?" → "summary"
   - If bot showed a summary and asked "수정하고 싶은 표현은 없나요?" / "디테일은 없나요?" → "no_edit_needed"
   - Look at the [Previous bot] message to determine context!

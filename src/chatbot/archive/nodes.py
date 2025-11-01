@@ -90,6 +90,58 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
     logger.info(f"[ServiceRouter] message={message[:50]}")
 
     try:
+        # 🎯 온보딩 완료 직후 첫 응답 체크
+        if cached_conv_state and cached_conv_state.get("current_step") == "onboarding_completed_awaiting_choice":
+            logger.info(f"[ServiceRouter] 온보딩 완료 직후 첫 응답 감지 → LLM 의도 분류")
+
+            # LLM으로 의도 분류 (weekly_acceptance vs rejection 재활용)
+            user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=message)
+
+            response = await llm.ainvoke([
+                SystemMessage(content=SERVICE_ROUTER_SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt)
+            ])
+
+            intent = response.content.strip().lower()
+            logger.info(f"[ServiceRouter] 온보딩 완료 후 선택 의도: {intent}")
+
+            metadata = user_context.metadata
+            user_name = metadata.name if metadata else None
+
+            if "weekly_acceptance" in intent or "daily_record" in intent:
+                # 시작 선택 → daily_agent_node로 이동
+                logger.info(f"[ServiceRouter] 사용자 선택: 시작 → daily_agent_node")
+
+                # current_step을 일반 상태로 변경
+                await db.upsert_conversation_state(user_id, current_step="daily_recording", temp_data={})
+
+                # 첫 질문 생성을 위한 특별 intent
+                return Command(
+                    update={
+                        "user_intent": UserIntent.DAILY_RECORD.value,
+                        "classified_intent": "onboarding_start_accepted"
+                    },
+                    goto="daily_agent_node"
+                )
+
+            elif "rejection" in intent:
+                # 나중에 선택 → 세션 종료
+                logger.info(f"[ServiceRouter] 사용자 선택: 나중에 → 종료 메시지")
+
+                # current_step 변경
+                await db.upsert_conversation_state(user_id, current_step="onboarding_completed", temp_data={})
+
+                goodbye_msg = f"알겠습니다, {user_name}님! 내일 '3분커리어 시작'을 입력하시면 일일기록을 시작할 수 있어요. 오늘도 수고하셨습니다!" if user_name else "알겠습니다! 내일 '3분커리어 시작'을 입력하시면 일일기록을 시작할 수 있어요. 오늘도 수고하셨습니다!"
+
+                return Command(update={"ai_response": goodbye_msg}, goto="__end__")
+
+            else:
+                # 애매한 응답 → 재질문
+                logger.info(f"[ServiceRouter] 애매한 응답 → 재질문")
+                clarify_msg = f"{user_name}님, 명확히 선택해주시겠어요?\n• '네, 시작할게요' - 오늘부터 기록 시작\n• '나중에 할게요' - 내일부터 시작" if user_name else "명확히 선택해주시겠어요?\n• '네, 시작할게요' - 오늘부터 기록 시작\n• '나중에 할게요' - 내일부터 시작"
+
+                return Command(update={"ai_response": clarify_msg}, goto="__end__")
+
         # 직전 봇 메시지 추출 (맥락 파악용)
         last_bot_message = None
         if cached_today_turns:
@@ -179,6 +231,7 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
     from src.prompt.onboarding_questions import (
         get_field_template, get_next_field,
         format_welcome_message, format_completion_message,
+        get_progress_indicator,
         FIELD_ORDER
     )
     from src.chatbot.state import ExtractionResponse, OnboardingIntent
@@ -305,7 +358,11 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             updated_metadata.field_attempts[target_field] = current_attempt + 1
             new_attempt = updated_metadata.field_attempts[target_field]
             # 최대 3차 질문까지
-            ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+            next_question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+
+            # 진행률 표시 추가
+            progress = get_progress_indicator(updated_metadata.dict())
+            ai_response = f"{progress}\n\n{next_question}"
 
         elif extraction_result.intent == OnboardingIntent.INVALID:
             # 무관한 응답 - 시도 횟수 증가 후 재질문 또는 스킵
@@ -323,7 +380,11 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
 
                 if next_field:
                     next_template = get_field_template(next_field)
-                    ai_response = next_template.get_question(1, name=updated_metadata.name)
+                    next_question = next_template.get_question(1, name=updated_metadata.name)
+
+                    # 진행률 표시 추가
+                    progress = get_progress_indicator(updated_metadata.dict())
+                    ai_response = f"{progress}\n\n{next_question}"
                 else:
                     # 온보딩 완료
                     await complete_onboarding(db, user_id)
@@ -334,7 +395,12 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             else:
                 # 재질문
                 print(f"⚠️ [{target_field}] 무관한 응답 ({new_attempt}/3회) - 재질문")
-                ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                next_question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+
+                # 진행률 표시 추가
+                progress = get_progress_indicator(updated_metadata.dict())
+                ai_response = f"{progress}\n\n{next_question}"
+
                 await save_onboarding_metadata(db, user_id, updated_metadata)
                 return Command(update={"ai_response": ai_response}, goto="__end__")
 
@@ -393,7 +459,10 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 next_attempt_count = updated_metadata.field_attempts.get(next_field, 0)
                 # attempts가 1이면 2차 질문, 2이면 3차 질문
                 next_question = field_template.get_question(min(next_attempt_count + 1, 3), name=user_name)
-                ai_response = next_question
+
+                # 진행률 표시 추가
+                progress = get_progress_indicator(updated_metadata.dict())
+                ai_response = f"{progress}\n\n{next_question}"
             elif next_field:
                 # 다른 필드로 이동 (성공 케이스)
                 next_template = get_field_template(next_field)
@@ -401,11 +470,14 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 # name이 방금 저장되었을 수 있으니 updated_metadata에서 다시 가져옴
                 next_question = next_template.get_question(1, name=updated_metadata.name)
 
+                # 진행률 표시 추가
+                progress = get_progress_indicator(updated_metadata.dict())
+
                 # 간단한 확인 메시지 + 다음 질문
                 if getattr(updated_metadata, target_field):
-                    ai_response = f"{next_question}"
+                    ai_response = f"{progress}\n\n{next_question}"
                 else:
-                    ai_response = next_question
+                    ai_response = f"{progress}\n\n{next_question}"
             else:
                 # 완료 - 마지막 필드까지 저장 후 온보딩 완료 처리
                 print(f"💾 [OnboardingAgent] 온보딩 완료 - save_onboarding_metadata 호출 전")
@@ -514,6 +586,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
         is_summary_response = False
         summary_type_value = None
         is_edit_summary = False  # 요약 수정 여부 (카운트 증가 판단용)
+        is_valid_turn = True  # 🚨 유효한 대화 턴인지 (카운트 증가 여부)
 
         # ========================================
         # 사용자 의도 분류: 요약 요청 vs 거절 vs 재시작 vs 일반 대화
@@ -526,31 +599,51 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
         else:
             logger.info(f"[DailyAgent] service_router에서 분류된 의도 재사용: {user_intent}")
 
+        # 온보딩 완료 후 시작 선택 (특별 케이스)
+        if "onboarding_start_accepted" in user_intent:
+            logger.info(f"[DailyAgent] 온보딩 완료 후 시작 선택 → 첫 질문 생성 (카운트 증가 X)")
+            user_context.daily_session_data = {}  # 세션 초기화
+
+            ai_response_final = f"좋아요, {metadata.name}님! 그럼 오늘 하신 업무에 대해 이야기 나눠볼까요?"
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
+
         # 오늘 기록 없이 요약 요청한 경우
-        if "no_record_today" in user_intent:
-            logger.info(f"[DailyAgent] 오늘 날짜 기록 없이 요약 요청 → 거부")
+        elif "no_record_today" in user_intent:
+            logger.info(f"[DailyAgent] 오늘 날짜 기록 없이 요약 요청 → 거부 (카운트 증가 X)")
             user_context.daily_session_data = {}
             ai_response_final = f"{metadata.name}님, 오늘의 일일기록을 먼저 진행해주세요! 오늘 하신 업무에 대해 이야기 나눠볼까요?"
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
 
         # 거절 (요약 제안 거절 → 세션 초기화하고 새 기록 시작 안내)
         elif "rejection" in user_intent:
-            logger.info(f"[DailyAgent] 거절 감지 → 세션 초기화")
+            logger.info(f"[DailyAgent] 거절 감지 → 세션 초기화 (카운트 증가 X)")
             user_context.daily_session_data = {}
             ai_response_final = f"알겠습니다, {metadata.name}님! 다시 시작할 때 편하게 말씀해주세요."
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
 
         # 대화 종료 요청
         elif "end_conversation" in user_intent:
             logger.info(f"[DailyAgent] 대화 종료 요청")
             user_context.daily_session_data = {}  # 세션 종료
-            ai_response_final = f"좋아요 {metadata.name}님, 오늘도 수고하셨습니다! 내일 다시 만나요 😊"
+
+            # 🚨 3턴 미만이면 출석 경고
+            current_daily_count = user_context.daily_record_count
+            if current_daily_count < 3:
+                remaining = 3 - current_daily_count
+                ai_response_final = f"{metadata.name}님, 오늘 출석 체크가 아직 완료되지 않았어요! (현재 {current_daily_count}/3턴)\n{remaining}턴만 더 대화하시면 출석이 인정됩니다.\n\n그래도 종료하시겠어요?"
+            else:
+                ai_response_final = f"좋아요 {metadata.name}님, 오늘도 수고하셨습니다! 내일 다시 만나요 😊"
+
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
 
         # 수정 불필요 (요약 만족 → 세션 종료)
         # 🚨 중요: 요약이 방금 생성된 경우에만 종료 처리
         elif "no_edit_needed" in user_intent and user_context.daily_session_data.get("last_summary_at"):
             # 요약 직후 → 세션 종료
-            logger.info(f"[DailyAgent] 수정 불필요 (요약 후) → 깔끔하게 마무리")
+            logger.info(f"[DailyAgent] 수정 불필요 (요약 후) → 깔끔하게 마무리 (카운트 증가 X)")
             user_context.daily_session_data = {}  # 세션 종료
             ai_response_final = f"좋아요 {metadata.name}님, 오늘도 수고하셨습니다! 내일 다시 만나요 😊"
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
 
         # 요약 수정 요청 (방금 생성된 요약에 추가 정보 반영)
         elif "edit_summary" in user_intent:
@@ -586,7 +679,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             # 7일차 체크 (Repository 함수 사용)
             current_daily_count = user_context.daily_record_count
 
-            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
+            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 3:
                 # 🚨 중요: 이미 주간요약 플래그가 있으면 제안하지 않음 (중복 방지)
                 conv_state = await db.get_conversation_state(user_id)
                 temp_data = conv_state.get("temp_data", {}) if conv_state else {}
@@ -638,7 +731,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             # 7일차 체크 (Repository 함수 사용)
             current_daily_count = user_context.daily_record_count
 
-            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
+            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 3:
                 # 🚨 중요: 이미 주간요약 플래그가 있으면 제안하지 않음 (중복 방지)
                 conv_state = await db.get_conversation_state(user_id)
                 temp_data = conv_state.get("temp_data", {}) if conv_state else {}
@@ -671,17 +764,28 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
 
         # 재시작 요청 (명시적으로 새 세션 시작)
         elif "restart" in user_intent:
-            logger.info(f"[DailyAgent] 재시작 요청 → 세션 초기화")
+            logger.info(f"[DailyAgent] 재시작 요청 → 세션 초기화 (카운트 증가 X)")
             user_context.daily_session_data = {}
             ai_response_final = f"{metadata.name}님, 새로운 일일 기록을 시작하겠습니다! 오늘은 어떤 업무를 하셨나요?"
+            is_valid_turn = False  # 🚨 카운트 증가 안 함
 
         # 일반 대화 (질문 생성)
         else:
             logger.info(f"[DailyAgent] 일반 대화 진행 ({current_session_count + 1}회차)")
 
-            # 5회 이상 대화 시 요약 제안
-            if current_session_count >= 5:
-                logger.info(f"[DailyAgent] 5회 이상 대화 완료 → 요약 제안")
+            # 🚨 Fallback: 요약 관련 키워드가 있지만 continue로 분류된 경우 (애매한 입력)
+            summary_keywords = ["정리", "요약", "써머리", "summary"]
+            message_lower = message.lower().replace(" ", "")
+            has_summary_keyword = any(keyword in message_lower for keyword in summary_keywords)
+
+            # 3회 이상 대화 완료 후 요약 제안했는데, 애매한 응답이 온 경우
+            if current_session_count >= 3 and has_summary_keyword and len(message) < 20:
+                logger.info(f"[DailyAgent] 애매한 요약 관련 입력 감지 → 명확화 요청")
+                ai_response_final = f"{metadata.name}님, 좀 더 명확히 말씀해주시겠어요? 예를 들어 '오늘 업무 요약해줘' 또는 '나중에 할게'처럼 말씀해주세요."
+
+            # 3회 이상 대화 시 요약 제안
+            elif current_session_count >= 3:
+                logger.info(f"[DailyAgent] 3회 이상 대화 완료 → 요약 제안")
                 ai_response_final = f"{metadata.name}님, 오늘도 많은 이야기 나눠주셨네요! 지금까지 내용을 정리해드릴까요?"
             else:
                 # 최근 3턴만 조회 (성능 최적화)
@@ -722,14 +826,17 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             summary_type=summary_type_value if is_summary_response else None
         )
 
-        # 🚨 중요: 요약 생성 시에만 카운트 증가 안 함
-        # - 요약 수정(edit_summary)은 실제 대화 내용을 반영하므로 카운트 O
-        # - 요약 생성(summary)은 기존 대화의 정리이므로 카운트 X
-        should_increment = True
+        # 🚨 중요: 카운트 증가 조건
+        # 1. 유효한 대화 턴이어야 함 (거절/종료/no_edit_needed 제외)
+        # 2. 요약 생성이 아니어야 함 (요약 수정은 포함)
+        should_increment = is_valid_turn
         if is_summary_response and not is_edit_summary:
             # 요약 생성(summary)만 카운트 제외
             should_increment = False
             logger.info(f"[DailyAgent] 요약 생성 - daily_record_count 증가 안 함")
+
+        if not is_valid_turn:
+            logger.info(f"[DailyAgent] 유효하지 않은 턴 (거절/종료/no_edit) - daily_record_count 증가 안 함")
 
         if should_increment:
             # Repository 함수로 카운트 증가 (daily_record_count + attendance_count 자동 처리)

@@ -8,8 +8,8 @@ from datetime import datetime
 from langgraph.graph.state import CompiledStateGraph
 
 from .workflow import build_workflow_graph
-from ..utils.models import get_chat_llm, get_onboarding_llm
-from ..utils.utils import simple_text_response, error_response
+from ..helpers.models import get_chat_llm, get_onboarding_llm
+from ..helpers.response_formatter import simple_text_response, error_response
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
 from ..database.user_repository import get_user_with_context
 from langchain_google_vertexai import ChatVertexAI

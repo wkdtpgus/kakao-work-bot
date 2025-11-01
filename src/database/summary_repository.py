@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # AI Service 스키마 import
-from ..service.schemas import (
+from ..core.schemas import (
     UserMetadataSchema,
     DailySummaryInput,
     WeeklyFeedbackInput
@@ -213,8 +213,8 @@ async def check_weekly_summary_ready(
         daily_summaries = await db.get_daily_summaries_v2(user_id, limit=7)
         daily_count = len(daily_summaries)
 
-        # 5개 이상이어야 주간 요약 생성
-        is_ready = daily_count >= 5
+        # 3개 이상이어야 주간 요약 생성
+        is_ready = daily_count >= 3
 
         logger.info(
             f"[SummaryRepoV2] 주간 요약 준비 체크: "
