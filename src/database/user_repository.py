@@ -122,10 +122,20 @@ async def check_and_reset_daily_count(db, user_id: str) -> Tuple[int, bool]:
     today = datetime.now().date()
     last_record_date = user.get("last_record_date")
 
-    # 날짜가 바뀌었으면 리셋
+    # 날짜가 바뀌었으면 리셋 (주간요약 플래그도 함께 정리)
     if last_record_date and last_record_date != today.isoformat():
         logger.info(f"[UserRepo] 📅 날짜 변경 감지: {last_record_date} → {today}")
         await db.create_or_update_user(user_id, {"daily_record_count": 0})
+
+        # 주간요약 플래그도 날짜 변경 시 정리
+        conv_state = await db.get_conversation_state(user_id)
+        if conv_state and conv_state.get("temp_data", {}).get("weekly_summary_ready"):
+            temp_data = conv_state.get("temp_data", {})
+            temp_data.pop("weekly_summary_ready", None)
+            temp_data.pop("attendance_count", None)  # attendance_count도 정리
+            await db.upsert_conversation_state(user_id, current_step=conv_state.get("current_step"), temp_data=temp_data)
+            logger.info(f"[UserRepo] 🧹 날짜 변경으로 weekly_summary_ready 플래그 정리")
+
         return 0, True
 
     return user.get("daily_record_count", 0), False

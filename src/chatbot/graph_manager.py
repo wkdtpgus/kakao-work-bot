@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .workflow import build_workflow_graph
 from ..utils.models import get_chat_llm, get_onboarding_llm
-from ..utils.utils import simple_text_response, error_response
+from ..utils.utils import simple_text_response
 from .state import OnboardingResponse, OverallState, UserContext, UserMetadata, OnboardingStage
 from ..database.user_repository import get_user_with_context
 from langchain_google_vertexai import ChatVertexAI
@@ -205,7 +205,7 @@ class ChatBotManager:
             logger.error(f"대화 처리 실패: {e}")
             import traceback
             traceback.print_exc()
-            return error_response("대화 처리 중 오류가 발생했습니다.")
+            return simple_text_response("대화 처리 중 오류가 발생했습니다.")
 
 
 # 싱글톤 인스턴스는 main.py에서 생성

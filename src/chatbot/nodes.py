@@ -10,6 +10,17 @@ from ..service.weekly_fallback_generator import (
 )
 from langchain_google_vertexai import ChatVertexAI
 from ..utils.models import get_chat_llm, get_summary_llm
+from ..utils.utils import (
+    extract_last_bot_message,
+    enhance_message_with_context,
+    format_conversation_history,
+    save_onboarding_conversation,
+    check_and_suggest_weekly_summary,
+    error_command,
+    success_command,
+    reset_session_data,
+    save_and_increment
+)
 import logging
 from typing import Literal
 from langgraph.types import Command
@@ -62,11 +73,8 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 
     except Exception as e:
         logger.error(f"[RouterNode] Error: {e}")
-        # 에러 시 기본 응답
-        return Command(
-            update={"ai_response": "죄송합니다. 오류가 발생했습니다."},
-            goto="__end__"
-        )
+        # 에러 시 기본 응답 - utils 함수 사용
+        return error_command("죄송합니다. 오류가 발생했습니다.")
 
 
 # =============================================================================
@@ -90,16 +98,11 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
     logger.info(f"[ServiceRouter] message={message[:50]}")
 
     try:
-        # 직전 봇 메시지 추출 (맥락 파악용)
-        last_bot_message = None
-        if cached_today_turns:
-            # V2 스키마: {"user_message": "...", "ai_message": "..."}
-            last_turn = cached_today_turns[-1] if cached_today_turns else None
-            if last_turn and last_turn.get("ai_message"):
-                last_bot_message = last_turn["ai_message"]
+        # 직전 봇 메시지 추출 (맥락 파악용) - utils 함수 사용
+        last_bot_message = extract_last_bot_message(cached_today_turns)
 
-        # 의도 분류 시 직전 봇 메시지 포함
-        enhanced_message = f"[Previous bot]: {last_bot_message}\n[User]: {message}" if last_bot_message else message
+        # 의도 분류 시 직전 봇 메시지 포함 - utils 함수 사용
+        enhanced_message = enhance_message_with_context(message, last_bot_message)
 
         # LLM으로 의도 분류 (온보딩 재시작 요청도 LLM이 처리)
         user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=enhanced_message)
@@ -247,12 +250,8 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
         if conv_state and conv_state.get("temp_data"):
             recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]  # 최근 3턴
 
-        # 대화 히스토리 포맷팅
-        history_text = ""
-        if recent_messages:
-            for msg in recent_messages[-2:]:  # 최근 1턴만 (봇 질문 + 사용자 답변)
-                role = "봇" if msg["role"] == "assistant" else "사용자"
-                history_text += f"{role}: {msg['content']}\n"
+        # 대화 히스토리 포맷팅 - utils 함수 사용 (최근 1턴)
+        history_text = format_conversation_history(recent_messages, max_turns=1)
 
         field_description = FIELD_DESCRIPTIONS.get(target_field, "")
         extraction_prompt = EXTRACTION_USER_PROMPT_TEMPLATE.format(
@@ -430,21 +429,8 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
         await save_onboarding_metadata(db, user_id, updated_metadata)
         print(f"✅ [OnboardingAgent] 메타데이터 저장 완료")
 
-        # 대화 히스토리 저장 (온보딩 진행 중만)
-        conv_state = await db.get_conversation_state(user_id)
-        recent_messages = []
-        if conv_state and conv_state.get("temp_data"):
-            recent_messages = conv_state["temp_data"].get("onboarding_messages", [])[-6:]
-
-        recent_messages.append({"role": "user", "content": message})
-        recent_messages.append({"role": "assistant", "content": ai_response})
-        recent_messages = recent_messages[-6:]  # 최근 3턴만 유지
-
-        await db.upsert_conversation_state(
-            user_id,
-            current_step="onboarding",
-            temp_data={"onboarding_messages": recent_messages}
-        )
+        # 대화 히스토리 저장 (온보딩 진행 중만) - utils 함수 사용
+        await save_onboarding_conversation(db, user_id, message, ai_response, max_history=6)
 
         return Command(update={"ai_response": ai_response}, goto="__end__")
 
@@ -529,19 +515,19 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
         # 오늘 기록 없이 요약 요청한 경우
         if "no_record_today" in user_intent:
             logger.info(f"[DailyAgent] 오늘 날짜 기록 없이 요약 요청 → 거부")
-            user_context.daily_session_data = {}
+            reset_session_data(user_context)
             ai_response_final = f"{metadata.name}님, 오늘의 일일기록을 먼저 진행해주세요! 오늘 하신 업무에 대해 이야기 나눠볼까요?"
 
         # 거절 (요약 제안 거절 → 세션 초기화하고 새 기록 시작 안내)
         elif "rejection" in user_intent:
             logger.info(f"[DailyAgent] 거절 감지 → 세션 초기화")
-            user_context.daily_session_data = {}
+            reset_session_data(user_context)
             ai_response_final = f"알겠습니다, {metadata.name}님! 다시 시작할 때 편하게 말씀해주세요."
 
         # 대화 종료 요청
         elif "end_conversation" in user_intent:
             logger.info(f"[DailyAgent] 대화 종료 요청")
-            user_context.daily_session_data = {}  # 세션 종료
+            reset_session_data(user_context)
             ai_response_final = f"좋아요 {metadata.name}님, 오늘도 수고하셨습니다! 내일 다시 만나요 😊"
 
         # 수정 불필요 (요약 만족 → 세션 종료)
@@ -549,7 +535,7 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
         elif "no_edit_needed" in user_intent and user_context.daily_session_data.get("last_summary_at"):
             # 요약 직후 → 세션 종료
             logger.info(f"[DailyAgent] 수정 불필요 (요약 후) → 깔끔하게 마무리")
-            user_context.daily_session_data = {}  # 세션 종료
+            reset_session_data(user_context)
             ai_response_final = f"좋아요 {metadata.name}님, 오늘도 수고하셨습니다! 내일 다시 만나요 😊"
 
         # 요약 수정 요청 (방금 생성된 요약에 추가 정보 반영)
@@ -583,33 +569,17 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             user_context.daily_session_data["conversation_count"] = 0
             logger.info(f"[DailyAgent] 요약 수정 완료 → conversation_count 리셋")
 
-            # 7일차 체크 (Repository 함수 사용)
-            current_daily_count = user_context.daily_record_count
+            # 7일차 체크 - utils 함수 사용
+            ai_response_final, weekly_suggested = await check_and_suggest_weekly_summary(
+                db, user_id, user_context, current_attendance_count,
+                ai_response, message, is_summary=True, summary_type='daily'
+            )
 
-            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
-                # 🚨 중요: 이미 주간요약 플래그가 있으면 제안하지 않음 (중복 방지)
-                conv_state = await db.get_conversation_state(user_id)
-                temp_data = conv_state.get("temp_data", {}) if conv_state else {}
-                weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
+            # 주간 요약 제안이 된 경우 바로 리턴
+            if weekly_suggested:
+                return Command(update={"ai_response": ai_response_final, "user_context": user_context}, goto="__end__")
 
-                if not weekly_summary_ready:
-                    logger.info(f"[DailyAgent] 🎉 7일차 달성! (수정된 요약, attendance={current_attendance_count}, daily={current_daily_count})")
-                    ai_response_with_suggestion = f"{ai_response}\n\n🎉 7일차 달성! 주간 요약도 보여드릴까요?"
-
-                    await db.save_conversation_turn(user_id, message, ai_response_with_suggestion, is_summary=True, summary_type='daily')
-
-                    # Repository 함수로 주간 요약 플래그 설정
-                    await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
-
-                    return Command(
-                        update={"ai_response": ai_response_with_suggestion, "user_context": user_context},
-                        goto="__end__"
-                    )
-                else:
-                    logger.info(f"[DailyAgent] 7일차지만 이미 주간요약 플래그 존재 (수정) → 제안 생략")
-                    # 플래그가 이미 있으면 일반 요약으로 처리 (제안 없이)
-
-            ai_response_final = ai_response
+            # 7일차 아니거나 이미 플래그 있는 경우 계속 진행
 
         # 요약 요청
         elif "summary" in user_intent:
@@ -635,44 +605,23 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
             user_context.daily_session_data["conversation_count"] = 0
             logger.info(f"[DailyAgent] 요약 생성 완료 → conversation_count 리셋")
 
-            # 7일차 체크 (Repository 함수 사용)
-            current_daily_count = user_context.daily_record_count
+            # 7일차 체크 - utils 함수 사용
+            ai_response_final, weekly_suggested = await check_and_suggest_weekly_summary(
+                db, user_id, user_context, current_attendance_count,
+                ai_response, message, is_summary=True, summary_type='daily'
+            )
 
-            if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
-                # 🚨 중요: 이미 주간요약 플래그가 있으면 제안하지 않음 (중복 방지)
-                conv_state = await db.get_conversation_state(user_id)
-                temp_data = conv_state.get("temp_data", {}) if conv_state else {}
-                weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
-
-                if not weekly_summary_ready:
-                    logger.info(f"[DailyAgent] 🎉 7일차 달성! (attendance={current_attendance_count}, daily={current_daily_count})")
-
-                    # 즉시 응답 (지연 없이)
-                    ai_response_with_suggestion = f"{ai_response}\n\n🎉 7일차 달성! 주간 요약도 보여드릴까요?"
-
-                    # 대화 저장
-                    await db.save_conversation_turn(user_id, message, ai_response_with_suggestion, is_summary=True, summary_type='daily')
-
-                    # Repository 함수로 주간 요약 플래그 설정
-                    await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
-
-                    logger.info(f"[DailyAgent] 데일리 요약 완료, 주간 요약은 사용자 요청 시 생성")
-
-                    return Command(
-                        update={"ai_response": ai_response_with_suggestion, "user_context": user_context},
-                        goto="__end__"
-                    )
-                else:
-                    logger.info(f"[DailyAgent] 7일차지만 이미 주간요약 플래그 존재 → 제안 생략")
-                    # 플래그가 이미 있으면 일반 요약으로 처리 (제안 없이)
+            # 주간 요약 제안이 된 경우 바로 리턴
+            if weekly_suggested:
+                logger.info(f"[DailyAgent] 데일리 요약 완료, 주간 요약은 사용자 요청 시 생성")
+                return Command(update={"ai_response": ai_response_final, "user_context": user_context}, goto="__end__")
 
             # 7일차 아니면 세션 유지하고 종료 (같은 날 계속 대화 가능)
-            ai_response_final = ai_response
 
         # 재시작 요청 (명시적으로 새 세션 시작)
         elif "restart" in user_intent:
             logger.info(f"[DailyAgent] 재시작 요청 → 세션 초기화")
-            user_context.daily_session_data = {}
+            reset_session_data(user_context)
             ai_response_final = f"{metadata.name}님, 새로운 일일 기록을 시작하겠습니다! 오늘은 어떤 업무를 하셨나요?"
 
         # 일반 대화 (질문 생성)
@@ -714,35 +663,19 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
                 logger.info(f"[DailyAgent] ✅ 질문 생성 완료, 대화 횟수: {current_session_count} → {current_session_count + 1}")
 
         # ========================================
-        # 공통: 대화 저장 + daily_record_count 증가 + attendance_count 체크 (Repository 함수)
+        # 공통: 대화 저장 + daily_record_count 증가 - utils 함수 사용
         # ========================================
-        await db.save_conversation_turn(
-            user_id, message, ai_response_final,
-            is_summary=is_summary_response,
-            summary_type=summary_type_value if is_summary_response else None
-        )
-
         # 🚨 중요: 요약 생성 시에만 카운트 증가 안 함
         # - 요약 수정(edit_summary)은 실제 대화 내용을 반영하므로 카운트 O
         # - 요약 생성(summary)은 기존 대화의 정리이므로 카운트 X
-        should_increment = True
-        if is_summary_response and not is_edit_summary:
-            # 요약 생성(summary)만 카운트 제외
-            should_increment = False
-            logger.info(f"[DailyAgent] 요약 생성 - daily_record_count 증가 안 함")
+        should_increment = not (is_summary_response and not is_edit_summary)
 
-        if should_increment:
-            # Repository 함수로 카운트 증가 (daily_record_count + attendance_count 자동 처리)
-            updated_daily_count, new_attendance = await increment_counts_with_check(db, user_id)
-
-            if new_attendance:
-                logger.info(f"[DailyAgent] 🎉 5회 달성! attendance_count 증가: {new_attendance}일차")
-                user_context.attendance_count = new_attendance
-
-            logger.info(f"[DailyAgent] daily_record_count 업데이트: {updated_daily_count}회")
-        else:
-            # 요약 생성 시 카운트 증가 안 함 (현재 값 유지)
-            updated_daily_count = user_context.daily_record_count
+        updated_daily_count, new_attendance = await save_and_increment(
+            db, user_id, message, ai_response_final, user_context,
+            is_summary=is_summary_response,
+            summary_type=summary_type_value if is_summary_response else None,
+            should_increment=should_increment
+        )
 
         # Repository 함수로 세션 데이터 업데이트
         await update_daily_session_data(
