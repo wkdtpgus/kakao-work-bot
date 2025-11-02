@@ -3,8 +3,8 @@
 DB 접근 로직 없음 - Repository에서 준비한 데이터를 받아서 LLM 호출만 수행
 """
 from langchain_core.messages import SystemMessage, HumanMessage
-from ..prompt.daily_summary_prompt import DAILY_SUMMARY_SYSTEM_PROMPT, DAILY_SUMMARY_USER_PROMPT
-from .schemas import DailySummaryInput, DailySummaryOutput
+from ...prompt.daily_summary_prompt import DAILY_SUMMARY_SYSTEM_PROMPT, DAILY_SUMMARY_USER_PROMPT
+from ...utils.schemas import DailySummaryInput, DailySummaryOutput
 from langsmith import traceable
 import logging
 
@@ -60,7 +60,7 @@ CRITICAL RULES for corrections:
 
 CRITICAL: Even after corrections, you MUST NOT use Markdown syntax
 - Use plain text only
-- NO bold, italics, headers, or bullet points"""
+- NO bold, markdown, italics, headers, or bullet points"""
             system_prompt = system_prompt + correction_instruction
 
         # LLM 호출

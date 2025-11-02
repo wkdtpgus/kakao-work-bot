@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # AI Service 스키마 import
-from ..service.schemas import (
+from ..utils.schemas import (
     UserMetadataSchema,
     DailySummaryInput,
     WeeklyFeedbackInput
@@ -236,7 +236,8 @@ async def prepare_daily_summary_data(
     db,
     user_id: str,
     today_turns: list,
-    user_correction: Optional[str] = None
+    user_correction: Optional[str] = None,
+    user_data: Optional[dict] = None
 ) -> DailySummaryInput:
     """데일리 요약 생성에 필요한 데이터 준비
 
@@ -248,13 +249,14 @@ async def prepare_daily_summary_data(
         user_id: 카카오 사용자 ID
         today_turns: 오늘의 대화 턴 리스트
         user_correction: 사용자의 수정 요청 (edit_summary 시 사용)
+        user_data: 사용자 정보 (캐시된 경우 전달, 없으면 조회)
 
     Returns:
         DailySummaryInput: AI 서비스용 입력 데이터
     """
     try:
-        # 사용자 정보 조회
-        user = await db.get_user(user_id)
+        # 사용자 정보 (캐시 재사용 or 조회)
+        user = user_data if user_data else await db.get_user(user_id)
 
         if not user:
             logger.warning(f"[SummaryRepoV2] 사용자 정보 없음: {user_id}")
@@ -299,7 +301,8 @@ async def prepare_daily_summary_data(
 
 async def prepare_weekly_feedback_data(
     db,
-    user_id: str
+    user_id: str,
+    user_data: Optional[dict] = None
 ) -> WeeklyFeedbackInput:
     """주간 피드백 생성에 필요한 데이터 준비
 
@@ -309,13 +312,21 @@ async def prepare_weekly_feedback_data(
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
+        user_data: 사용자 정보 (캐시된 경우 전달, 없으면 조회)
 
     Returns:
         WeeklyFeedbackInput: AI 서비스용 입력 데이터
     """
     try:
-        # 사용자 정보 조회
-        user = await db.get_user(user_id)
+        # 병렬 DB 쿼리 (user_data가 캐시되어 있으면 재사용)
+        import asyncio
+        if user_data:
+            user, daily_summaries = user_data, await db.get_daily_summaries_v2(user_id, limit=7)
+        else:
+            user, daily_summaries = await asyncio.gather(
+                db.get_user(user_id),
+                db.get_daily_summaries_v2(user_id, limit=7)
+            )
 
         if not user:
             logger.warning(f"[SummaryRepoV2] 사용자 정보 없음: {user_id}")
@@ -324,9 +335,6 @@ async def prepare_weekly_feedback_data(
                 user_metadata=UserMetadataSchema(),
                 formatted_context=""
             )
-
-        # 최근 7개 데일리 요약 조회
-        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=7)
 
         if not daily_summaries or len(daily_summaries) == 0:
             logger.warning(f"[SummaryRepoV2] 데일리 요약 없음 → 최근 대화 히스토리로 대체")

@@ -8,11 +8,11 @@ INTENT_CLASSIFICATION_USER_PROMPT = """User message: "{message}"
 
 Classify the user's intent into one of the following:
 - summary: User wants to generate/create a daily summary OR accepts bot's summary generation suggestion 
-  (e.g., "응", "네", "그래", "좋아", "알겠어", "알겠다고", "ㅇㅇ", "ㅇㅋ", "okay", "yes", "정리해줘", "요약해줘")
+  (e.g., "응", "네", "그래", "좋아", "알겠어", "알겠다고", "ㅇㅇ", "ㅇㅋ", "okay", "yes", "정리해줘", "요약해줘", "부탁해", "해줘")
 - edit_summary: User wants to edit/modify the JUST CREATED summary with SPECIFIC changes 
   (e.g., "수정해줘", "다시 생성해줘", "[내용]도 기록해줘", "[내용] 빠졌어", "이건 틀렸어")
 - no_edit_needed: User indicates NO edits are needed AFTER summary was already created 
-  (e.g., "응", "네", "그래", "없어", "없어요", "괜찮아", "좋아", "ㅇㅇ", "ㅇㅋ", "okay")
+  (e.g., "응", "네", "그래", "없어", "없어요", "괜찮아", "좋아", "ㅇㅇ", "ㅇㅋ", "okay", "부탁해", "해줘")
 - end_conversation: User wants to END the conversation 
   (e.g., "끝", "종료", "그만", "바이", "bye")
 - rejection: User EXPLICITLY REJECTS a bot's suggestion 

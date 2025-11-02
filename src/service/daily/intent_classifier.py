@@ -1,6 +1,6 @@
-"""사용자 의도 분류 서비스"""
+"""사용자 의도 분류 서비스 (일일 기록 세부 의도)"""
 from langchain_core.messages import SystemMessage, HumanMessage
-from ..prompt.intent_classifier import INTENT_CLASSIFICATION_SYSTEM_PROMPT, INTENT_CLASSIFICATION_USER_PROMPT
+from ...prompt.intent_prompts import INTENT_CLASSIFICATION_SYSTEM_PROMPT, INTENT_CLASSIFICATION_USER_PROMPT
 from langsmith import traceable
 from datetime import datetime
 import logging
