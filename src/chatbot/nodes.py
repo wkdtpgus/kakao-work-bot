@@ -4,7 +4,6 @@ from ..service import (
     generate_weekly_feedback,
     calculate_current_week_day,
     format_partial_weekly_feedback,
-    format_already_processed_message,
     format_no_record_message,
 )
 from ..utils.models import get_chat_llm, get_summary_llm
@@ -525,6 +524,7 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
 
             # Repository 함수로 플래그 정리
             await clear_weekly_summary_flag(db, user_id)
+            logger.info(f"[WeeklyAgent] 정식 주간요약 완료 → 플래그 정리")
 
             ai_response = weekly_summary
 
@@ -566,16 +566,30 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
                 # 참고용은 summary_type='daily'로 저장
                 await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='daily')
 
-            # 7, 14, 21일차 but 플래그 없음: 이미 확인했거나 거절한 경우
+            # 7, 14, 21일차: 정식 주간요약 제공 (플래그 없어도 OK)
             else:
-                logger.info(f"[WeeklyAgent] 7일차지만 플래그 없음 → 이미 처리됨")
-                ai_response = format_already_processed_message()
+                logger.info(f"[WeeklyAgent] 7일차 이후 수동 요청 → 정식 주간요약 제공")
 
-                # 일반 대화로 저장
-                await db.save_conversation_turn(user_id, message, ai_response, is_summary=False)
+                # 정식 주간요약 생성
+                user_data = {
+                    "name": metadata.name,
+                    "job_title": metadata.job_title,
+                    "career_goal": metadata.career_goal
+                }
+                input_data = await prepare_weekly_feedback_data(db, user_id, user_data=user_data)
+                output = await generate_weekly_feedback(input_data, llm)
+                ai_response = output.feedback_text
 
-            # 조기 리턴 (정식 주간요약과 분리)
-            logger.info(f"[WeeklyAgent] 참고용 피드백 완료: {ai_response[:50]}...")
+                # 플래그가 있으면 정리 (이전에 거절했다가 다시 요청한 경우)
+                if is_ready:
+                    await clear_weekly_summary_flag(db, user_id)
+                    logger.info(f"[WeeklyAgent] 수동 요청이지만 플래그 있음 → 플래그 정리")
+
+                # 정식 주간요약으로 저장
+                await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='weekly')
+
+            # 수동 요청 조기 리턴 (0일차, 1-6일차, 7일차 이후)
+            logger.info(f"[WeeklyAgent] 수동 요청 완료: {ai_response[:50]}...")
             return Command(update={"ai_response": ai_response}, goto="__end__")
 
         # 정식 주간요약 대화 저장 (is_ready=True인 경우만)

@@ -322,12 +322,22 @@ async def check_and_suggest_weekly_summary(
 
     # 7일차 체크 (7, 14, 21일차 등)
     if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
-        # 중복 방지: 이미 주간요약 플래그가 있으면 제안하지 않음
+        # 중복 방지: 이미 주간요약 플래그가 있거나 이미 완료했으면 제안하지 않음
         conv_state = await db.get_conversation_state(user_id)
         temp_data = conv_state.get("temp_data", {}) if conv_state else {}
         weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
 
-        if not weekly_summary_ready:
+        # 이번 주차에 주간요약을 이미 완료했는지 체크 (주차 단위 비교)
+        weekly_completed_at_count = temp_data.get("weekly_completed_at_count")
+        if weekly_completed_at_count:
+            # 주차 번호로 비교 (1~7일차: 1주차, 8~14일차: 2주차, ...)
+            current_week = (current_attendance_count - 1) // 7 + 1
+            completed_week = (weekly_completed_at_count - 1) // 7 + 1
+            already_completed_this_week = (current_week == completed_week)
+        else:
+            already_completed_this_week = False
+
+        if not weekly_summary_ready and not already_completed_this_week:
             logger.info(f"[check_weekly_summary] 🎉 7일차 달성! (attendance={current_attendance_count}, daily={current_daily_count})")
 
             # 주간 요약 제안 메시지 추가
@@ -347,8 +357,11 @@ async def check_and_suggest_weekly_summary(
 
             return ai_response_with_suggestion, True
         else:
-            logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 플래그 존재 → 제안 생략")
-            # 플래그가 이미 있으면 일반 요약으로 처리 (제안 없이)
+            if weekly_summary_ready:
+                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 플래그 존재 → 제안 생략")
+            elif already_completed_this_week:
+                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 완료 (completed_at={weekly_completed_at_count}) → 제안 생략")
+            # 플래그가 이미 있거나 완료되었으면 일반 요약으로 처리 (제안 없이)
             return ai_response, False
 
     # 7일차 아님

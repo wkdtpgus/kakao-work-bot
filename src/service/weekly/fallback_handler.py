@@ -36,11 +36,6 @@ def format_partial_weekly_feedback(current_day: int, feedback_text: str) -> str:
 💡 이 내용은 참고용이며, 정식 주간요약이 아닙니다. 일일기록을 7회 완료하면 3분커리어가 자동으로 주간요약을 제안해요!"""
 
 
-def format_already_processed_message() -> str:
-    """7일차 달성했으나 이미 처리된 경우 응답 메시지"""
-    return "해당 주간요약은 이미 확인하셨거나 확인 기간이 지났습니다. 다음 7일차에 새로운 주간요약을 확인하실 수 있어요!"
-
-
 def format_no_record_message() -> str:
     """0일차 (일일기록 시작 전) 응답 메시지"""
     return "아직 일일기록을 시작하지 않으셨어요. 일일기록을 7회 완료하면 주간요약을 확인하실 수 있어요!"

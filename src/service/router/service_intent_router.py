@@ -12,7 +12,11 @@ Service Intent Router
 import logging
 from typing import Tuple, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
-from ...prompt.intent_prompts import SERVICE_ROUTER_SYSTEM_PROMPT, SERVICE_ROUTER_USER_PROMPT
+from ...prompt.intent_prompts import (
+    SERVICE_ROUTER_SYSTEM_PROMPT,
+    SERVICE_ROUTER_USER_PROMPT,
+    SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +40,28 @@ async def classify_service_intent(
         - has_weekly_flag: 주간 요약 플래그 존재 여부
     """
     try:
-        # LLM으로 의도 분류
-        user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=message)
+        # ===== 플래그/상태 기반 우선 라우팅 =====
+        # weekly_summary_ready 플래그 또는 weekly_summary_pending 상태이면 주간 요약 제안 상태
+        has_weekly_flag = False
+        if cached_conv_state:
+            temp_data = cached_conv_state.get("temp_data", {})
+            current_step = cached_conv_state.get("current_step", "")
+            has_weekly_flag = (
+                temp_data.get("weekly_summary_ready", False) or
+                current_step == "weekly_summary_pending"
+            )
+
+        # ===== LLM 기반 의도 분류 =====
+        # 플래그 있음: 주간요약 제안 컨텍스트 포함 3-way 분류 (weekly_acceptance / rejection / daily_record)
+        # 플래그 없음: 일반 4-way 분류 (daily_record / weekly_feedback / weekly_acceptance / rejection)
+        if has_weekly_flag:
+            # 주간 요약 제안 상태 → 컨텍스트 포함 프롬프트 사용
+            user_prompt = SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT.format(message=message)
+            logger.info(f"[IntentRouter] 플래그 있음 → 주간요약 컨텍스트 포함 LLM 분류")
+        else:
+            # 일반 상태 → 기본 프롬프트 사용
+            user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=message)
+            logger.info(f"[IntentRouter] 플래그 없음 → 일반 LLM 분류")
 
         response = await llm.ainvoke([
             SystemMessage(content=SERVICE_ROUTER_SYSTEM_PROMPT),
@@ -46,13 +70,7 @@ async def classify_service_intent(
 
         intent = response.content.strip().lower()
 
-        # 주간 요약 플래그 체크 (weekly_acceptance인 경우만)
-        has_weekly_flag = False
-        if intent == "weekly_acceptance" and cached_conv_state:
-            temp_data = cached_conv_state.get("temp_data", {})
-            has_weekly_flag = temp_data.get("weekly_summary_ready", False)
-
-        logger.info(f"[IntentRouter] 분류된 의도: {intent}, weekly_flag={has_weekly_flag}")
+        logger.info(f"[IntentRouter] LLM 분류 결과: {intent}, weekly_flag={has_weekly_flag}")
 
         return intent, has_weekly_flag
 

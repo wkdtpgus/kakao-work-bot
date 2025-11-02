@@ -63,3 +63,29 @@ IMPORTANT:
 - General conversation about work is "daily_record", NOT "rejection"
 
 Response format: Only return one of: daily_record, weekly_feedback, weekly_acceptance, rejection"""
+
+SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT = """Conversation context: "{message}"
+
+🔔 IMPORTANT CONTEXT: The system has detected that the bot recently proposed/suggested viewing the weekly summary.
+The [Previous bot] message above likely contains the weekly summary proposal (e.g., "주간요약도 보여드릴까요?", "주간 피드백 확인하시겠어요?").
+
+Your task: Analyze the [User] message and classify it into one of the following based on whether it responds to the weekly summary proposal:
+
+- weekly_acceptance: User ACCEPTS the weekly summary proposal
+  (e.g., "응", "네", "좋아", "그래", "보여줘", "볼래", "okay", "yes", "ㅇㅇ", "ㄱㄱ", "알겠어", "부탁해")
+- rejection: User EXPLICITLY REJECTS the weekly summary proposal
+  (e.g., "아니", "싫어", "나중에", "안 할래", "거절", "no", "아뇨", "안돼", "싫")
+- daily_record: User's message is UNRELATED to the weekly summary proposal (general greeting, small talk, new topic, or changes the subject)
+  (e.g., "안녕", "뭐해", "오늘 어땠어", any message that ignores or doesn't address the proposal)
+
+CRITICAL RULES:
+1. Check if [Previous bot] message contains weekly summary proposal keywords ("주간요약", "주간 피드백", "weekly")
+2. If it does, determine if [User] is responding to it:
+   - POSITIVE response → "weekly_acceptance"
+   - NEGATIVE response → "rejection"
+   - UNRELATED/IGNORING → "daily_record"
+3. If [Previous bot] doesn't mention weekly summary, or [User] is clearly talking about something else → "daily_record"
+4. Examples of UNRELATED: greetings ("안녕"), off-topic questions ("뭐해?"), new conversation topics
+5. When unsure between acceptance and unrelated, prefer "daily_record" (safer default to avoid false positives)
+
+Response format: Only return one of: weekly_acceptance, rejection, daily_record"""

@@ -64,17 +64,24 @@ async def clear_weekly_summary_flag(db, user_id: str) -> None:
     conv_state = await db.get_conversation_state(user_id)
     temp_data = conv_state.get("temp_data", {}) if conv_state else {}
 
+    # 현재 attendance_count 저장 (중복 방지용)
+    completed_at_count = temp_data.get("attendance_count")
+
     # 플래그 제거
     temp_data.pop("weekly_summary_ready", None)
     temp_data.pop("attendance_count", None)
     temp_data.pop("daily_count_verified", None)
+
+    # 완료 시점의 attendance_count 기록 (중복 제안 방지)
+    if completed_at_count:
+        temp_data["weekly_completed_at_count"] = completed_at_count
 
     await db.upsert_conversation_state(
         user_id,
         current_step="weekly_feedback_completed",
         temp_data=temp_data
     )
-    logger.info(f"[ConvRepo] 주간 요약 플래그 정리 완료")
+    logger.info(f"[ConvRepo] 주간 요약 플래그 정리 완료 (completed_at={completed_at_count})")
 
 
 async def set_weekly_summary_flag(
