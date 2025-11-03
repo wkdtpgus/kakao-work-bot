@@ -205,20 +205,23 @@ async def check_weekly_summary_ready(
         (is_ready, daily_summary_count): 준비 여부와 일일 요약 개수
     """
     try:
-        # 7의 배수가 아니면 준비 안 됨
-        if attendance_count == 0 or attendance_count % 7 != 0:
+        from ..config.business_config import WEEKLY_SUMMARY_MIN_DAILY_COUNT, WEEKLY_CYCLE_DAYS
+
+        # 주기의 배수가 아니면 준비 안 됨
+        if attendance_count == 0 or attendance_count % WEEKLY_CYCLE_DAYS != 0:
             return False, 0
 
-        # 최근 7개 일일 요약 조회
-        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=7)
+        # 최근 주기 내 일일 요약 조회
+        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=WEEKLY_CYCLE_DAYS)
         daily_count = len(daily_summaries)
 
-        # 5개 이상이어야 주간 요약 생성
-        is_ready = daily_count >= 5
+        # WEEKLY_SUMMARY_MIN_DAILY_COUNT 이상이어야 주간 요약 생성
+        is_ready = daily_count >= WEEKLY_SUMMARY_MIN_DAILY_COUNT
 
         logger.info(
             f"[SummaryRepoV2] 주간 요약 준비 체크: "
-            f"attendance={attendance_count}, daily_count={daily_count}, ready={is_ready}"
+            f"attendance={attendance_count}, daily_count={daily_count}, "
+            f"required={WEEKLY_SUMMARY_MIN_DAILY_COUNT}, ready={is_ready}"
         )
 
         return is_ready, daily_count

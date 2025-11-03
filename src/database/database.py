@@ -328,7 +328,7 @@ class Database:
             return 0
 
     async def increment_attendance_count(self, user_id: str, daily_record_count: int) -> int:
-        """출석(일일기록) 카운트 증가 및 현재 카운트 반환 (5회 턴 조건)
+        """출석(일일기록) 카운트 증가 및 현재 카운트 반환
 
         Args:
             user_id: 사용자 ID
@@ -338,9 +338,11 @@ class Database:
             int: 업데이트된 attendance_count
 
         로직:
-            - daily_record_count가 정확히 5일 때만 호출됨 (nodes.py에서 제어)
-            - 호출되면 무조건 +1 증가 (중복 체크는 nodes.py의 "== 5" 조건이 자동으로 방지)
+            - daily_record_count가 DAILY_TURNS_THRESHOLD에 도달할 때만 호출됨
+            - 호출되면 무조건 +1 증가 (중복 체크는 nodes.py에서 제어)
         """
+        from ..config.business_config import DAILY_TURNS_THRESHOLD
+
         try:
             user = await self.get_user(user_id)
 
@@ -350,17 +352,17 @@ class Database:
 
             current_count = user.get("attendance_count", 0)
 
-            # 안전장치: 5회 미만이면 증가 안 함
-            if daily_record_count < 5:
-                print(f"⏳ [DB] 대화 턴 부족 (현재 {daily_record_count}회, 5회 필요): {user_id}")
+            # 안전장치: DAILY_TURNS_THRESHOLD 미만이면 증가 안 함
+            if daily_record_count < DAILY_TURNS_THRESHOLD:
+                print(f"⏳ [DB] 대화 턴 부족 (현재 {daily_record_count}회, {DAILY_TURNS_THRESHOLD}회 필요): {user_id}")
                 return current_count
 
-            # 5회 달성 → 카운트 증가
+            # 임계값 달성 → 카운트 증가
             new_count = current_count + 1
             await self.create_or_update_user(user_id, {
                 "attendance_count": new_count
             })
-            print(f"✅ [DB] attendance_count 증가 (5회 턴 달성): {user_id} → {new_count}일차")
+            print(f"✅ [DB] attendance_count 증가 ({DAILY_TURNS_THRESHOLD}회 턴 달성): {user_id} → {new_count}일차")
             return new_count
 
         except Exception as e:

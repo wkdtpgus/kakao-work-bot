@@ -532,6 +532,8 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
         else:
             logger.info(f"[WeeklyAgent] 수동 요청")
 
+            from ..config.business_config import WEEKLY_CYCLE_DAYS
+
             # user_context에서 attendance_count 가져오기
             current_count = user_context.attendance_count
 
@@ -544,10 +546,10 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
                 await db.save_conversation_turn(user_id, message, ai_response, is_summary=False)
 
             # 1~6일차: 참고용 피드백 제공
-            elif current_count % 7 != 0:
+            elif current_count % WEEKLY_CYCLE_DAYS != 0:
                 # 현재 주차 내 일차 계산 (헬퍼 함수 사용)
                 current_day_in_week = calculate_current_week_day(current_count)
-                logger.info(f"[WeeklyAgent] 7일 미달 (현재 {current_day_in_week}일차) → 참고용 피드백 제공")
+                logger.info(f"[WeeklyAgent] {WEEKLY_CYCLE_DAYS}일 미달 (현재 {current_day_in_week}일차) → 참고용 피드백 제공")
 
                 # 임시 피드백 생성
                 # user_data 캐시 전달 (중복 DB 쿼리 방지)

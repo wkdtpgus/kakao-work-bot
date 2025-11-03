@@ -1,0 +1,22 @@
+"""Configuration module
+
+이 모듈은 애플리케이션의 모든 설정 값을 중앙에서 관리합니다.
+"""
+
+from .business_config import (
+    DAILY_TURNS_THRESHOLD,
+    SUMMARY_SUGGESTION_THRESHOLD,
+    WEEKLY_SUMMARY_MIN_DAILY_COUNT,
+    WEEKLY_CYCLE_DAYS,
+    MAX_CONTEXT_TURNS,
+    MAX_ONBOARDING_HISTORY,
+)
+
+__all__ = [
+    "DAILY_TURNS_THRESHOLD",
+    "SUMMARY_SUGGESTION_THRESHOLD",
+    "WEEKLY_SUMMARY_MIN_DAILY_COUNT",
+    "WEEKLY_CYCLE_DAYS",
+    "MAX_CONTEXT_TURNS",
+    "MAX_ONBOARDING_HISTORY",
+]

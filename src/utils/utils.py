@@ -54,6 +54,7 @@ def extract_last_bot_message(cached_today_turns: List[Dict[str, str]]) -> Option
 
     Args:
         cached_today_turns: [{"user_message": "...", "ai_message": "..."}, ...] 형식
+                           (turn_index 내림차순 정렬 - 최신이 앞에)
 
     Returns:
         마지막 AI 메시지 또는 None
@@ -61,11 +62,15 @@ def extract_last_bot_message(cached_today_turns: List[Dict[str, str]]) -> Option
     Usage:
         service_router_node, daily_agent_node에서 맥락 파악용
     """
+    from .schemas import ConversationTurn, ConversationHistory
+
     if not cached_today_turns:
         return None
 
-    last_turn = cached_today_turns[-1]
-    return last_turn.get("ai_message")
+    # ConversationHistory를 사용하여 명확한 데이터 구조와 순서 보장
+    turns = [ConversationTurn.from_dict(turn) for turn in cached_today_turns]
+    history = ConversationHistory(turns)
+    return history.get_last_ai_message()
 
 
 def enhance_message_with_context(message: str, last_bot_message: Optional[str]) -> str:
@@ -123,95 +128,7 @@ def format_conversation_history(
 
 
 # -----------------------------------------------------------------------------
-# 2. LLM 호출 및 응답 처리
-# -----------------------------------------------------------------------------
-
-async def safe_llm_invoke(
-    llm,
-    system_prompt: str,
-    user_prompt: str,
-    fallback_message: str = "죄송합니다. 잠시 문제가 발생했어요."
-) -> str:
-    """
-    LLM 호출 + None 체크를 한 번에 처리
-
-    Args:
-        llm: LangChain LLM 인스턴스
-        system_prompt: 시스템 프롬프트
-        user_prompt: 사용자 프롬프트
-        fallback_message: LLM이 None 반환 시 폴백 메시지
-
-    Returns:
-        LLM 응답 텍스트 또는 폴백 메시지
-
-    Usage:
-        service_router_node, daily_agent_node에서 안전한 LLM 호출
-    """
-    from langchain_core.messages import SystemMessage, HumanMessage
-
-    try:
-        response = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ])
-
-        if response is None or not response.content:
-            logger.warning("[safe_llm_invoke] LLM이 None 반환")
-            return fallback_message
-
-        return response.content.strip()
-
-    except Exception as e:
-        logger.error(f"[safe_llm_invoke] LLM 호출 실패: {e}")
-        return fallback_message
-
-
-async def invoke_structured_llm(
-    llm,
-    schema_class: Type,
-    system_prompt: str,
-    user_prompt: str,
-    fallback_value: Any = None
-):
-    """
-    Structured Output LLM 호출 + 에러 핸들링
-
-    Args:
-        llm: LangChain LLM 인스턴스 (원본)
-        schema_class: Pydantic 스키마 클래스 (ExtractionResponse 등)
-        system_prompt: 시스템 프롬프트
-        user_prompt: 사용자 프롬프트
-        fallback_value: LLM 실패 시 반환할 기본값
-
-    Returns:
-        schema_class 인스턴스 또는 fallback_value
-
-    Usage:
-        온보딩 의도 추출 등 structured output 필요 시
-    """
-    from langchain_core.messages import SystemMessage, HumanMessage
-
-    try:
-        structured_llm = llm.with_structured_output(schema_class)
-
-        result = await structured_llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ])
-
-        if result is None:
-            logger.warning(f"[invoke_structured_llm] LLM이 None 반환 (schema={schema_class.__name__})")
-            return fallback_value
-
-        return result
-
-    except Exception as e:
-        logger.error(f"[invoke_structured_llm] Structured LLM 호출 실패: {e}")
-        return fallback_value
-
-
-# -----------------------------------------------------------------------------
-# 3. 온보딩 관련 공통 로직
+# 2. 온보딩 관련 공통 로직
 # -----------------------------------------------------------------------------
 
 async def save_onboarding_conversation(
@@ -317,11 +234,12 @@ async def check_and_suggest_weekly_summary(
         daily_agent_node에서 요약 생성/수정 후 7일차 체크
     """
     from ..database import set_weekly_summary_flag
+    from ..config.business_config import DAILY_TURNS_THRESHOLD, WEEKLY_CYCLE_DAYS
 
     current_daily_count = user_context.daily_record_count
 
-    # 7일차 체크 (7, 14, 21일차 등)
-    if current_attendance_count > 0 and current_attendance_count % 7 == 0 and current_daily_count >= 5:
+    # 주간 요약 주기 체크 (7, 14, 21일차 등)
+    if current_attendance_count > 0 and current_attendance_count % WEEKLY_CYCLE_DAYS == 0 and current_daily_count >= DAILY_TURNS_THRESHOLD:
         # 중복 방지: 이미 주간요약 플래그가 있거나 이미 완료했으면 제안하지 않음
         conv_state = await db.get_conversation_state(user_id)
         temp_data = conv_state.get("temp_data", {}) if conv_state else {}

@@ -7,46 +7,39 @@ INTENT_CLASSIFICATION_SYSTEM_PROMPT = "You are an expert at classifying user int
 INTENT_CLASSIFICATION_USER_PROMPT = """User message: "{message}"
 
 Classify the user's intent into one of the following:
+- summary: User wants to generate/create a daily summary OR accepts bot's summary generation suggestion 
+  (e.g., "응", "네", "그래", "좋아", "알겠어", "알겠다고", "ㅇㅇ", "ㅇㅋ", "okay", "yes", "정리해줘", "요약해줘", "부탁해", "해줘")
+- edit_summary: User wants to edit/modify the JUST CREATED summary with SPECIFIC changes 
+  (e.g., "수정해줘", "다시 생성해줘", "[내용]도 기록해줘", "[내용] 빠졌어", "이건 틀렸어")
+- no_edit_needed: User indicates NO edits are needed AFTER summary was already created 
+  (e.g., "응", "네", "그래", "없어", "없어요", "괜찮아", "좋아", "ㅇㅇ", "ㅇㅋ", "okay", "부탁해", "해줘")
+- end_conversation: User wants to END the conversation 
+  (e.g., "끝", "종료", "그만", "바이", "bye")
+- rejection: User EXPLICITLY REJECTS a bot's suggestion 
+  (e.g., "아니", "싫어", "나중에", "안 할래")
+- restart: User explicitly wants to start a completely new daily record session 
+  (e.g., "처음부터 다시", "새로 시작", "리셋")
+- continue: User wants to continue the daily record conversation (DEFAULT)
 
-DEFAULT BEHAVIOR:
-- If unsure: "continue"
-- General work conversation: "continue"
-- Clarifications during conversation: "continue" (NOT "edit_summary" or "rejection")
-
-1. summary: User wants to generate daily summary OR accepts bot's EXPLICIT summary generation proposal
-   - Explicit requests: "정리해줘", "요약해줘"
-   - Positive responses ("응", "네", "좋아", "부탁해", "해줘", "okay") ONLY when bot asked: "정리해드릴까요?", "요약해드릴까요?", "내용을 정리해드릴까요?"
-
-2. edit_summary: User wants to modify the JUST CREATED summary with SPECIFIC changes
-   - Must mention what to change: "수정해줘", "[내용]도 기록해줘", "[내용] 빠졌어", "이건 틀렸어"
-   - Key patterns: "빠졌어", "누락", "안 들어갔어", "~도 넣어줘", "~도 기록해줘", "추가해줘", "반영해줘"
-   - Requires a COMPLETED summary to modify (checked via session flag)
-
-3. no_edit_needed: User indicates NO edits needed AFTER summary was created
-   - Bot showed summary and asked about edits: "수정하고 싶은 표현은 없나요?", "디테일은 없나요?"
-   - User responds positively: "응", "네", "없어", "괜찮아", "좋아"
-
-4. end_conversation: User wants to END the conversation
-   - Clear exit signals: "끝", "종료", "그만", "바이", "bye"
-
-5. rejection: User EXPLICITLY REJECTS a bot's suggestion
-   - Clear refusal: "아니", "싫어", "나중에", "안 할래"
-   - Only for explicit rejections, NOT general conversation clarifications
-
-6. restart: User wants to start a completely new daily record session
-   - Explicit restart requests: "처음부터 다시", "새로 시작", "리셋"
-
-7. continue: User wants to continue daily record conversation (DEFAULT)
-   - Work-related conversation, task details, general responses
-   - Positive responses ("응", "좋아") when bot suggests STARTING conversation (NOT summary generation)
-   - Conversation clarifications: "안했어", "선택 안했다니까", "그거 아니야"
-
-CRITICAL RULES FOR SHORT RESPONSES ("응", "네", "좋아" etc.):
-- Check [Previous bot] message context!
-- If bot asked to START/CONTINUE conversation ("이야기 나눠볼까요?", "업무에 대해 말해줄래요?") → "continue"
-- If bot offered to CREATE SUMMARY ("정리해드릴까요?", "요약해드릴까요?") → "summary"
-- If bot asked about EDITING summary ("수정하고 싶은 부분 있나요?") → "no_edit_needed"
-- Priority: Check conversation starters FIRST, then summary proposals
+IMPORTANT:
+- If unsure, default to "continue"
+- **CRITICAL - Context-based classification for short responses ("응", "네", "그래", "알겠어", "알겠다고" etc.)**:
+  - If bot asked "정리해드릴까요?" / "요약해드릴까요?" / "내용을 정리해드릴까요?" → "summary"
+  - If bot showed a summary and asked "수정하고 싶은 표현은 없나요?" / "디테일은 없나요?" → "no_edit_needed"
+  - Look at the [Previous bot] message to determine context!
+  - **PRIORITY**: "summary" takes priority when bot suggests creating/generating summary
+  - **PRIORITY**: "no_edit_needed" ONLY when summary already exists and bot asks about edits
+- **CRITICAL**: Distinguish between "edit_summary" (needs changes), "no_edit_needed" (satisfied), and "end_conversation" (wants to exit)
+  - "edit_summary": User provides SPECIFIC corrections/additions to summary (must mention what to change)
+  - "no_edit_needed": Short positive/neutral responses after summary question (satisfied, no changes)
+  - "end_conversation": Clear exit/goodbye signals
+- Only use "rejection" for CLEAR, EXPLICIT refusal responses to bot's suggestions
+- **CRITICAL**: Corrections/negations during ongoing conversation ("안했어", "선택 안했다니까", "그거 아니야") are "continue", NOT "edit_summary" or "rejection"
+  - These are part of the conversation flow where user is clarifying what they actually did
+  - Only classify as "edit_summary" if there's a COMPLETED summary to modify
+- General work-related conversation is "continue", NOT "rejection"
+- **🚨 edit_summary priority**: If user requests to ADD/INCLUDE/RECORD specific content to summary (e.g., "[내용]도 기록해줘", "[내용]도 넣어줘", "[내용]도 포함해줘", "[내용] 빠졌어"), it's "edit_summary" even if wording is casual
+- **🚨 Key patterns for edit_summary**: "빠졌어", "누락", "안 들어갔어", "~도 넣어줘", "~도 기록해줘", "~도 포함해줘", "추가해줘", "반영해줘"
 
 Response format: Only return one of: summary, edit_summary, no_edit_needed, end_conversation, rejection, continue, restart"""
 

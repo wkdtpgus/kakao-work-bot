@@ -71,53 +71,6 @@ class GraphManager:
 
         return self.user_graphs[user_graph_key]
 
-    def get_user_graph(self, user_id: str, graph_type: str = "main") -> CompiledStateGraph:
-        """유저 그래프 가져오기 (없으면 생성)"""
-        return self.get_or_create_user_graph(user_id, graph_type)
-
-    def reset_user_graph(self, user_id: str, graph_type: str = "onboarding") -> None:
-        """유저 그래프 초기화"""
-        user_graph_key = f"{user_id}_{graph_type}"
-
-        if user_graph_key in self.user_graphs:
-            del self.user_graphs[user_graph_key]
-            logger.info(f"유저 그래프 삭제: {user_id} ({graph_type})")
-
-    def reset_all_user_graphs(self, user_id: str) -> None:
-        """특정 유저의 모든 그래프 초기화"""
-        keys_to_delete = []
-
-        # 삭제할 키들 찾기
-        for key in self.user_graphs.keys():
-            if key.startswith(f"{user_id}_"):
-                keys_to_delete.append(key)
-
-        # 그래프들 삭제
-        for key in keys_to_delete:
-            if key in self.user_graphs:
-                del self.user_graphs[key]
-
-        logger.info(f"유저의 모든 그래프 삭제: {user_id}")
-
-    async def determine_graph_type(self, user_id: str, message: str) -> str:
-        """메시지와 유저 상태를 기반으로 적절한 그래프 타입 결정"""
-        # 통합 구조이므로 항상 main
-        return "main"
-
-    def get_available_graph_types(self) -> list:
-        """사용 가능한 그래프 타입 목록 반환"""
-        return list(self.graph_types.keys())
-
-    def get_user_graph_stats(self) -> Dict[str, int]:
-        """유저 그래프 통계 반환"""
-        stats = {}
-        for graph_type in self.graph_types.keys():
-            count = sum(1 for key in self.user_graphs.keys() if key.endswith(f"_{graph_type}"))
-            stats[graph_type] = count
-
-        stats["total_users"] = len(set(key.split("_")[0] for key in self.user_graphs.keys()))
-        return stats
-
     async def load_request_cache(
         self,
         user_id: str

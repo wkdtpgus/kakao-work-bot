@@ -8,13 +8,15 @@ def calculate_current_week_day(attendance_count: int) -> int:
         attendance_count: 전체 출석 일수
 
     Returns:
-        int: 주차 내 일차 (1-6, 0은 7로 변환)
+        int: 주차 내 일차 (1-6, 0은 WEEKLY_CYCLE_DAYS로 변환)
 
     Examples:
         8 → 1, 9 → 2, 14 → 0 → 7, 15 → 1
     """
-    remainder = attendance_count % 7
-    return remainder if remainder > 0 else 7
+    from ...config.business_config import WEEKLY_CYCLE_DAYS
+
+    remainder = attendance_count % WEEKLY_CYCLE_DAYS
+    return remainder if remainder > 0 else WEEKLY_CYCLE_DAYS
 
 
 def format_partial_weekly_feedback(current_day: int, feedback_text: str) -> str:

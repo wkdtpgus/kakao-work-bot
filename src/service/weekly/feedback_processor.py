@@ -145,9 +145,11 @@ async def process_weekly_feedback(
     Returns:
         WeeklyFeedbackResponse: 처리 결과
     """
-    # 1. 7일차 자동 트리거 (플래그 O + 출석 일수 저장됨)
+    from ...config.business_config import WEEKLY_CYCLE_DAYS
+
+    # 1. 주기 달성 자동 트리거 (플래그 O + 출석 일수 저장됨)
     if is_ready and stored_attendance_count:
-        logger.info(f"[WeeklyHandler] 7일차 주간요약 생성 (attendance_count={stored_attendance_count})")
+        logger.info(f"[WeeklyHandler] {WEEKLY_CYCLE_DAYS}일차 주간요약 생성 (attendance_count={stored_attendance_count})")
         return await handle_official_weekly_feedback(db, user_id, metadata, llm)
 
     # 2. 수동 요청 - 0일차: 일일기록 시작 전
@@ -155,9 +157,9 @@ async def process_weekly_feedback(
         return await handle_no_record_yet()
 
     # 3. 수동 요청 - 1~6일차: 참고용 피드백 제공
-    if current_count % 7 != 0:
+    if current_count % WEEKLY_CYCLE_DAYS != 0:
         return await handle_partial_weekly_feedback(db, user_id, metadata, current_count, llm)
 
-    # 4. 수동 요청 - 7일차 이후: 정식 주간요약 제공 (플래그 없어도 OK)
-    logger.info(f"[WeeklyHandler] 7일차 이후 수동 요청 → 정식 주간요약 제공")
+    # 4. 수동 요청 - 주기 달성 후: 정식 주간요약 제공 (플래그 없어도 OK)
+    logger.info(f"[WeeklyHandler] {WEEKLY_CYCLE_DAYS}일차 이후 수동 요청 → 정식 주간요약 제공")
     return await handle_official_weekly_feedback(db, user_id, metadata, llm)

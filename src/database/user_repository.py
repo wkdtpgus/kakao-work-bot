@@ -153,15 +153,17 @@ async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[i
             - new_daily_count: 증가된 daily_record_count
             - new_attendance_count: 5회 달성 시 증가된 attendance_count, 아니면 None
     """
+    from ..config.business_config import DAILY_TURNS_THRESHOLD
+
     # daily_record_count 증가
     new_daily_count = await db.increment_daily_record_count(user_id)
 
-    # 5회가 되는 순간 attendance_count 증가
-    if new_daily_count == 5:
+    # DAILY_TURNS_THRESHOLD 달성 시 attendance_count 증가
+    if new_daily_count == DAILY_TURNS_THRESHOLD:
         user = await db.get_user(user_id)
         current_attendance = user.get("attendance_count", 0) if user else 0
         new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
-        logger.info(f"[UserRepo] 🎉 5회 달성! attendance: {current_attendance} → {new_attendance}일차")
+        logger.info(f"[UserRepo] 🎉 {DAILY_TURNS_THRESHOLD}회 달성! attendance: {current_attendance} → {new_attendance}일차")
         return new_daily_count, new_attendance
 
     return new_daily_count, None

@@ -283,12 +283,14 @@ async def handle_general_conversation(
     from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
     from ...prompt.daily_record_prompt import DAILY_CONVERSATION_SYSTEM_PROMPT
 
+    from ...config.business_config import SUMMARY_SUGGESTION_THRESHOLD
+
     current_session_count = user_context.daily_session_data.get("conversation_count", 0)
     logger.info(f"[DailyRecordHandler] 일반 대화 진행 ({current_session_count + 1}회차)")
 
-    # 5회 이상 대화 시 요약 제안
-    if current_session_count >= 5:
-        logger.info(f"[DailyRecordHandler] 5회 이상 대화 완료 → 요약 제안")
+    # SUMMARY_SUGGESTION_THRESHOLD 이상 대화 시 요약 제안
+    if current_session_count >= SUMMARY_SUGGESTION_THRESHOLD:
+        logger.info(f"[DailyRecordHandler] {SUMMARY_SUGGESTION_THRESHOLD}회 이상 대화 완료 → 요약 제안")
         return DailyRecordResponse(
             ai_response=f"{metadata.name}님, 오늘도 많은 이야기 나눠주셨네요! 지금까지 내용을 정리해드릴까요?"
         )
