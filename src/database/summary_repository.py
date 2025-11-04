@@ -240,7 +240,8 @@ async def prepare_daily_summary_data(
     user_id: str,
     today_turns: list,
     user_correction: Optional[str] = None,
-    user_data: Optional[dict] = None
+    user_data: Optional[dict] = None,
+    latest_summary: Optional[str] = None
 ) -> DailySummaryInput:
     """데일리 요약 생성에 필요한 데이터 준비
 
@@ -250,9 +251,10 @@ async def prepare_daily_summary_data(
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
-        today_turns: 오늘의 대화 턴 리스트
+        today_turns: 오늘의 대화 턴 리스트 (수정 모드에서는 빈 리스트 가능)
         user_correction: 사용자의 수정 요청 (edit_summary 시 사용)
         user_data: 사용자 정보 (캐시된 경우 전달, 없으면 조회)
+        latest_summary: 최신 생성된 요약 (edit_summary 시 사용, 있으면 수정 모드)
 
     Returns:
         DailySummaryInput: AI 서비스용 입력 데이터
@@ -294,7 +296,8 @@ async def prepare_daily_summary_data(
             conversation_context=conversation_context,
             attendance_count=user.get("attendance_count", 0),
             daily_record_count=user.get("daily_record_count", 0),
-            user_correction=user_correction
+            user_correction=user_correction,
+            latest_summary=latest_summary
         )
 
     except Exception as e:

@@ -1,6 +1,5 @@
 from .state import OverallState, UserContext, UserMetadata, OnboardingStage, OnboardingResponse, UserIntent
 from ..service import (
-    classify_user_intent,
     generate_weekly_feedback,
     calculate_current_week_day,
     format_partial_weekly_feedback,
@@ -53,12 +52,16 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 
         # 온보딩 완료 여부에 따라 라우팅 (State는 이미 캐시 포함)
         if user_context.onboarding_stage == OnboardingStage.COMPLETED:
+            logger.info(f"[RouterNode] ✅ 온보딩 완료 → service_router_node로 라우팅")
             return Command(goto="service_router_node")
         else:
+            logger.info(f"[RouterNode] ⚠️ 온보딩 미완료 → onboarding_agent_node로 라우팅")
             return Command(goto="onboarding_agent_node")
 
     except Exception as e:
-        logger.error(f"[RouterNode] Error: {e}")
+        logger.error(f"[RouterNode] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         # 에러 시 기본 응답 - utils 함수 사용
         return error_command("죄송합니다. 오류가 발생했습니다.")
 
@@ -73,6 +76,8 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
 
     일일 기록으로 라우팅하는 경우 세부 의도(summary/edit_summary/rejection/continue)도 분류하여 전달
     """
+    logger.info(f"🔀 [ServiceRouter] 시작")
+
     from ..service import route_user_intent
 
     message = state["message"]
@@ -97,16 +102,30 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
         )
 
         # Command 생성
-        update = {"user_intent": user_intent}
-        if classified_intent:  # daily의 경우 세부 의도 포함
-            update["classified_intent"] = classified_intent
+        logger.info(f"[ServiceRouter] 🔍 route={route}, user_intent={user_intent}, classified_intent={classified_intent}")
 
+        update = {"user_intent": user_intent}
+        if classified_intent is not None:  # daily의 경우 세부 의도 포함 (None이 아니면 모두 포함)
+            update["classified_intent"] = classified_intent
+            logger.info(f"[ServiceRouter] ✅ classified_intent 설정: {classified_intent}")
+        else:
+            logger.warning(f"[ServiceRouter] ⚠️ classified_intent가 None! route={route}")
+
+        logger.info(f"[ServiceRouter] ✅ Command 반환 - goto={route}")
         return Command(update=update, goto=route)
 
     except Exception as e:
-        logger.error(f"[ServiceRouter] Error: {e}, defaulting to daily_record")
-        # 에러 시 기본값: 일일 기록
-        return Command(update={"user_intent": UserIntent.DAILY_RECORD.value}, goto="daily_agent_node")
+        logger.error(f"[ServiceRouter] ❌ Error: {e}, defaulting to daily_record")
+        import traceback
+        traceback.print_exc()
+        # 에러 시 기본값: 일일 기록 (continue로 분류)
+        return Command(
+            update={
+                "user_intent": UserIntent.DAILY_RECORD.value,
+                "classified_intent": "continue"
+            },
+            goto="daily_agent_node"
+        )
 
 
 # =============================================================================
@@ -399,6 +418,8 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
     3. 비즈니스 로직 처리 (service/daily_record_handler)
     4. 대화 저장 + 카운트 증가 (service/daily_record_handler)
     """
+    logger.info(f"🔀 [DailyAgent] 노드 시작")
+
     from ..service import process_daily_record, save_daily_conversation
 
     user_id = state["user_id"]
@@ -409,6 +430,8 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
     cached_today_turns = state.get("cached_today_turns")
 
     logger.info(f"[DailyAgent] user_id={user_id}, message={message[:50]}")
+    logger.info(f"[DailyAgent] 🔍 state.user_intent={state.get('user_intent')}")
+    logger.info(f"[DailyAgent] 🔍 state.classified_intent={state.get('classified_intent')}")
 
     try:
         # ========================================
@@ -433,14 +456,13 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
         llm = get_chat_llm()
 
         # ========================================
-        # 2. 의도 분류 (service_router에서 분류된 경우 재사용)
+        # 2. 의도 가져오기 (service_router에서 전달받음)
         # ========================================
+        # daily_agent_node는 항상 service_router_node를 거치며,
+        # service_router에서 모든 케이스에 대해 세부 의도를 분류하므로
+        # classified_intent는 항상 존재함 (재분류 불필요)
         user_intent = state.get("classified_intent")
-        if not user_intent:
-            # service_router를 거치지 않은 경우에만 분류
-            user_intent = await classify_user_intent(message, llm, user_context, db)
-        else:
-            logger.info(f"[DailyAgent] service_router에서 분류된 의도 재사용: {user_intent}")
+        logger.info(f"[DailyAgent] service_router에서 분류된 의도 사용: {user_intent}")
 
         # ========================================
         # 3. 비즈니스 로직 처리 (service 레이어)

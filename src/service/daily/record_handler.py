@@ -137,21 +137,29 @@ async def handle_edit_summary(
 
     logger.info(f"[DailyRecordHandler] 요약 수정 요청 → 사용자 피드백 반영")
 
-    # 요약 수정 시 오늘 전체 대화 조회
-    today = datetime.now().date().isoformat()
-    all_today_turns = await db.get_conversation_history_by_date_v2(user_id, today, limit=50)
-    logger.info(f"[DailyRecordHandler] 요약 수정용 전체 대화 조회: {len(all_today_turns)}턴")
+    # 🔍 오늘 날짜의 최신 요약 조회 (edit_summary는 최신 요약 필요)
+    daily_summaries = await db.get_daily_summaries_v2(user_id, limit=1)
+
+    if not daily_summaries or len(daily_summaries) == 0:
+        return DailyRecordResponse(
+            ai_response=f"{metadata.name}님, 수정할 요약이 없습니다. 먼저 요약을 생성해주세요!"
+        )
+
+    latest_summary = daily_summaries[0]
+    latest_summary_text = latest_summary.get("summary_content", "")
+    logger.info(f"[DailyRecordHandler] 최신 요약 조회 완료 (날짜: {latest_summary.get('session_date')})")
 
     # user_data 캐시 전달 (중복 DB 쿼리 방지)
     user_data = _build_user_data(metadata, user_context)
 
-    # 요약 재생성
+    # 요약 재생성 (latest_summary 전달 → 자동으로 수정 모드)
     input_data = await prepare_daily_summary_data(
         db,
         user_id,
-        all_today_turns,
+        [],  # 전체 대화 턴 불필요 (수정 모드)
         user_correction=message,
-        user_data=user_data
+        user_data=user_data,
+        latest_summary=latest_summary_text
     )
     output = await generate_daily_summary(input_data, llm)
     ai_response = output.summary_text
@@ -425,6 +433,11 @@ async def process_daily_record(
         DailyRecordResponse: 처리 결과
     """
     metadata = user_context.metadata
+
+    # user_intent가 None인 경우 처리
+    if user_intent is None:
+        logger.error(f"[DailyRecordHandler] ❌ user_intent가 None입니다! 일반 대화로 fallback")
+        return await handle_general_conversation(message, user_context, metadata, cached_today_turns, llm)
 
     # 오늘 기록 없이 요약 요청한 경우
     if "no_record_today" in user_intent:

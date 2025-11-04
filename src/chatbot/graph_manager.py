@@ -139,6 +139,7 @@ class ChatBotManager:
                 message=message,
                 user_context=user_context,  # ✅ 미리 로드된 컨텍스트
                 user_intent=None,   # service_router에서 결정
+                classified_intent=None,  # service_router에서 결정 (daily의 경우 세부 의도)
                 ai_response="",
                 conversation_history=[],
                 conversation_summary="",

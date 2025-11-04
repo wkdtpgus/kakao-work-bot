@@ -102,7 +102,8 @@ class OverallState(TypedDict):
     user_id: str
     message: str
     user_context: UserContext
-    user_intent: Optional[str]  # UserIntent 값
+    user_intent: Optional[str]  # UserIntent 값 (서비스 레벨: daily_record | weekly_feedback)
+    classified_intent: Optional[str]  # 세부 의도 (summary | edit_summary | continue | restart | rejection | no_edit_needed)
     ai_response: str
     conversation_history: List[BaseMessage]
     conversation_summary: str

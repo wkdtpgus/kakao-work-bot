@@ -56,18 +56,28 @@ Response format: Only return one of: summary, edit_summary, no_edit_needed, end_
 # ============================================================================
 SERVICE_ROUTER_SYSTEM_PROMPT = "You are an expert at classifying user intent accurately."
 
-SERVICE_ROUTER_USER_PROMPT = """User message: "{message}"
+SERVICE_ROUTER_USER_PROMPT = """Conversation context: "{message}"
 
 Classify the user's intent into one of the following:
 - daily_record: Daily work, task recording, reflection (DEFAULT for most conversations)
+  - Includes positive responses to DAILY-related bot questions (e.g., "지금까지 내용을 정리해드릴까요?" → "응")
 - weekly_feedback: User explicitly requests weekly summary
-- weekly_acceptance: User accepts/confirms to see weekly summary (positive responses like yes, okay, sure)
+- weekly_acceptance: User accepts/confirms to see WEEKLY summary ONLY
+  - ONLY when [Previous bot] explicitly mentioned WEEKLY summary ("주간요약", "주간 피드백")
+  - NOT for daily summary acceptance
 - rejection: User EXPLICITLY REJECTS a bot's suggestion with clear negative intent (e.g., "아니요", "싫어요", "나중에", "안 할래", "거절")
+
+CRITICAL RULES FOR SHORT POSITIVE RESPONSES ("응", "네", "좋아", etc.):
+1. Check [Previous bot] message context!
+2. If bot asked about DAILY summary ("지금까지 내용을 정리해드릴까요?", "오늘 내용 정리해드릴까요?") → "daily_record"
+3. If bot asked about WEEKLY summary ("주간요약 보여드릴까요?", "주간 피드백 확인하시겠어요?") → "weekly_acceptance"
+4. If unclear or no bot proposal → "daily_record" (safer default)
 
 IMPORTANT:
 - If unsure, default to "daily_record"
 - Only use "rejection" for CLEAR, EXPLICIT refusal responses
 - General conversation about work is "daily_record", NOT "rejection"
+- Positive responses to daily summary proposals are "daily_record", NOT "weekly_acceptance"
 
 Response format: Only return one of: daily_record, weekly_feedback, weekly_acceptance, rejection"""
 

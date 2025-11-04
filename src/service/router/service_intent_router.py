@@ -122,9 +122,11 @@ async def route_user_intent(
             logger.info(f"[IntentRouter] 주간 요약 수락 (플래그 있음) → weekly_agent_node")
             return "weekly_agent_node", UserIntent.WEEKLY_FEEDBACK.value, None
         else:
-            # 플래그 없으면 일반 대화로 처리
+            # 플래그 없으면 일반 대화로 처리 (세부 의도 분류 필요)
             logger.info(f"[IntentRouter] 주간 요약 수락 BUT 플래그 없음 → daily_agent_node")
-            return "daily_agent_node", UserIntent.DAILY_RECORD.value, None
+            detailed_intent = await classify_user_intent(message, llm, user_context, db)
+            logger.info(f"[IntentRouter] 세부 의도: {detailed_intent}")
+            return "daily_agent_node", UserIntent.DAILY_RECORD.value, detailed_intent
 
     # 4. 주간 피드백 명시적 요청
     elif intent == "weekly_feedback":

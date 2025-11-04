@@ -29,13 +29,18 @@ async def classify_user_intent(message: str, llm, user_context=None, db=None) ->
     intent = intent_response.content.strip().lower()
     logger.info(f"🎯 [IntentClassifier] 사용자 메시지: '{message}' → 분류 결과: '{intent}'")
 
-    # edit_summary 의도는 요약 직후에만 유효 (last_summary_at 플래그 체크)
+    # edit_summary 의도는 요약이 존재할 때만 유효
     if "edit_summary" in intent and user_context:
         last_summary_at = user_context.daily_session_data.get("last_summary_at")
+
         if not last_summary_at:
             # 요약 생성한 적 없으면 일반 대화로 처리
             logger.info(f"🔄 [IntentClassifier] edit_summary이지만 요약 전 → continue로 변경")
             return "continue"
+
+        # LLM이 edit_summary로 분류했다면 신뢰하고 그대로 사용
+        # conversation_count와 무관하게 명시적인 수정 요청은 수정 모드로 처리
+        logger.info(f"✅ [IntentClassifier] edit_summary 확정 - LLM 분류 신뢰")
 
     # 요약 요청 시 오늘 대화 존재 여부 체크
     if "summary" in intent and user_context:

@@ -175,6 +175,10 @@ class DailySummaryInput(BaseModel):
         default=None,
         description="사용자의 수정 요청 (edit_summary 시 사용)"
     )
+    latest_summary: Optional[str] = Field(
+        default=None,
+        description="최신 생성된 요약 텍스트 (edit_summary 시 사용). 존재하면 수정 모드, 없으면 생성 모드"
+    )
 
     class Config:
         json_schema_extra = {
