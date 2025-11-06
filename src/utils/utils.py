@@ -47,49 +47,8 @@ def is_onboarding_complete(current_state: Dict[str, Any]) -> bool:
 # -----------------------------------------------------------------------------
 # 1. 대화 히스토리 처리 관련
 # -----------------------------------------------------------------------------
-
-def extract_last_bot_message(cached_today_turns: List[Dict[str, str]]) -> Optional[str]:
-    """
-    최근 대화 턴에서 마지막 봇 메시지를 추출
-
-    Args:
-        cached_today_turns: [{"user_message": "...", "ai_message": "..."}, ...] 형식
-                           (turn_index 내림차순 정렬 - 최신이 앞에)
-
-    Returns:
-        마지막 AI 메시지 또는 None
-
-    Usage:
-        service_router_node, daily_agent_node에서 맥락 파악용
-    """
-    from .schemas import ConversationTurn, ConversationHistory
-
-    if not cached_today_turns:
-        return None
-
-    # ConversationHistory를 사용하여 명확한 데이터 구조와 순서 보장
-    turns = [ConversationTurn.from_dict(turn) for turn in cached_today_turns]
-    history = ConversationHistory(turns)
-    return history.get_last_ai_message()
-
-
-def enhance_message_with_context(message: str, last_bot_message: Optional[str]) -> str:
-    """
-    사용자 메시지에 직전 봇 메시지 컨텍스트를 추가
-
-    Args:
-        message: 현재 사용자 메시지
-        last_bot_message: 직전 봇 메시지 (없으면 None)
-
-    Returns:
-        컨텍스트가 포함된 강화 메시지
-
-    Usage:
-        의도 분류 시 직전 대화 맥락을 LLM에 전달
-    """
-    if last_bot_message:
-        return f"[Previous bot]: {last_bot_message}\n[User]: {message}"
-    return message
+# Note: extract_last_bot_message, enhance_message_with_context는
+# src/service/router/message_enhancer.py로 이동되었습니다.
 
 
 def format_conversation_history(

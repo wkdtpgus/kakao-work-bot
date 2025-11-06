@@ -97,6 +97,8 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[Dict[str, An
         attendance_count=user.get("attendance_count", 0),
         daily_record_count=user.get("daily_record_count", 0),
         last_record_date=user.get("last_record_date"),
+        created_at=user.get("created_at"),
+        updated_at=user.get("updated_at"),
         daily_session_data=daily_session_data
     )
 

@@ -313,12 +313,17 @@ async def handle_general_conversation(
     from ...config.business_config import SUMMARY_SUGGESTION_THRESHOLD
 
     current_session_count = user_context.daily_session_data.get("conversation_count", 0)
-    logger.info(f"[DailyRecordHandler] 일반 대화 진행 ({current_session_count + 1}회차)")
-    logger.info(f"🔍 [DEBUG] current_session_count={current_session_count}, THRESHOLD={SUMMARY_SUGGESTION_THRESHOLD}, 조건={current_session_count >= SUMMARY_SUGGESTION_THRESHOLD}")
+
+    # 대화 횟수 먼저 증가
+    new_count = current_session_count + 1
+    user_context.daily_session_data["conversation_count"] = new_count
+
+    logger.info(f"[DailyRecordHandler] 일반 대화 진행 ({new_count}회차)")
+    logger.info(f"🔍 [DEBUG] new_count={new_count}, THRESHOLD={SUMMARY_SUGGESTION_THRESHOLD}, 조건={new_count >= SUMMARY_SUGGESTION_THRESHOLD}")
 
     # SUMMARY_SUGGESTION_THRESHOLD 이상 대화 시 요약 제안
-    if current_session_count >= SUMMARY_SUGGESTION_THRESHOLD:
-        logger.info(f"[DailyRecordHandler] {SUMMARY_SUGGESTION_THRESHOLD}회 이상 대화 완료 → 요약 제안")
+    if new_count >= SUMMARY_SUGGESTION_THRESHOLD:
+        logger.info(f"[DailyRecordHandler] {SUMMARY_SUGGESTION_THRESHOLD}회 대화 완료 → 요약 제안")
         return DailyRecordResponse(
             ai_response=f"{metadata.name}님, 오늘도 많은 이야기 나눠주셨네요! 지금까지 내용을 정리해드릴까요?"
         )
@@ -348,9 +353,7 @@ async def handle_general_conversation(
     response = await llm.ainvoke(messages)
     ai_response_final = response.content
 
-    # 대화 횟수 증가
-    user_context.daily_session_data["conversation_count"] = current_session_count + 1
-    logger.info(f"[DailyRecordHandler] ✅ 질문 생성 완료, 대화 횟수: {current_session_count} → {current_session_count + 1}")
+    logger.info(f"[DailyRecordHandler] ✅ 질문 생성 완료, 대화 횟수: {new_count}")
 
     return DailyRecordResponse(
         ai_response=ai_response_final

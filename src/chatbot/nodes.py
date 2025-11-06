@@ -6,9 +6,8 @@ from ..service import (
     format_no_record_message,
 )
 from ..utils.models import get_chat_llm, get_summary_llm
+from ..service.router.message_enhancer import extract_last_bot_message
 from ..utils.utils import (
-    extract_last_bot_message,
-    enhance_message_with_context,
     format_conversation_history,
     save_onboarding_conversation,
     error_command,
@@ -39,7 +38,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @traceable(name="router_node")
-async def router_node(state: OverallState, db) -> Command[Literal["onboarding_agent_node", "service_router_node"]]:
+async def router_node(state: OverallState, db) -> Command[Literal["onboarding_agent_node", "service_router_node", "__end__"]]:
     """온보딩 완료 여부 체크 후 분기 (캐시는 graph_manager에서 이미 로드됨)"""
     user_id = state["user_id"]
     logger.info(f"🔀 [RouterNode] 시작 - user_id={user_id}")
@@ -52,6 +51,17 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 
         # 온보딩 완료 여부에 따라 라우팅 (State는 이미 캐시 포함)
         if user_context.onboarding_stage == OnboardingStage.COMPLETED:
+            # 온보딩 완료 당일 체크: created_at.date() == updated_at.date()
+            if user_context.created_at and user_context.updated_at:
+                created_date = user_context.created_at.date()
+                updated_date = user_context.updated_at.date()
+
+                if created_date == updated_date:
+                    logger.info(f"[RouterNode] 🚫 온보딩 완료 당일 (created={created_date}, updated={updated_date}) - 일일기록 차단")
+                    user_name = user_context.metadata.name if user_context.metadata else None
+                    blocking_message = f"{user_name}님, 내일부터 업무기록을 시작할 수 있어요. 잊지 않도록 <3분커리어>가 알림할게요!" if user_name else "내일부터 업무기록을 시작할 수 있어요. 잊지 않도록 <3분커리어>가 알림할게요!"
+                    return Command(update={"ai_response": blocking_message}, goto="__end__")
+
             logger.info(f"[RouterNode] ✅ 온보딩 완료 → service_router_node로 라우팅")
             return Command(goto="service_router_node")
         else:
@@ -90,11 +100,13 @@ async def service_router_node(state: OverallState, llm, db) -> Command[Literal["
     logger.info(f"[ServiceRouter] message={message[:50]}")
 
     try:
-        # 직전 봇 메시지 추출 (맥락 파악용) - utils 함수 사용
+        # 직전 봇 메시지 추출 및 컨텍스트 포함
         last_bot_message = extract_last_bot_message(cached_today_turns)
-
-        # 의도 분류 시 직전 봇 메시지 포함 - utils 함수 사용
-        enhanced_message = enhance_message_with_context(message, last_bot_message)
+        enhanced_message = (
+            f"[Previous bot]: {last_bot_message}\n[User]: {message}"
+            if last_bot_message
+            else message
+        )
 
         # 비즈니스 로직: 의도 분류 + 라우팅 결정 (service 레이어)
         route, user_intent, classified_intent = await route_user_intent(
@@ -143,6 +155,7 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
     from src.prompt.onboarding_questions import (
         get_field_template, get_next_field,
         format_welcome_message, format_completion_message,
+        get_progress_indicator,
         FIELD_ORDER
     )
     from src.chatbot.state import ExtractionResponse, OnboardingIntent
@@ -172,7 +185,8 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             # 첫 질문 가져오기
             first_template = get_field_template("name")
             first_question = first_template.get_question(1)
-            ai_response = f"{welcome_msg}\n\n{first_question}"
+            progress = get_progress_indicator(current_metadata.dict())
+            ai_response = f"{welcome_msg}\n\n{progress}\n\n{first_question}"
 
             # 메타데이터 초기화 (field_attempts, field_status 저장)
             await save_onboarding_metadata(db, user_id, current_metadata)
@@ -265,7 +279,9 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             updated_metadata.field_attempts[target_field] = current_attempt + 1
             new_attempt = updated_metadata.field_attempts[target_field]
             # 최대 3차 질문까지
-            ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+            progress = get_progress_indicator(updated_metadata.dict())
+            question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+            ai_response = f"{progress}\n\n{question}"
 
         elif extraction_result.intent == OnboardingIntent.INVALID:
             # 무관한 응답 - 시도 횟수 증가 후 재질문 또는 스킵
@@ -294,7 +310,9 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             else:
                 # 재질문
                 print(f"⚠️ [{target_field}] 무관한 응답 ({new_attempt}/3회) - 재질문")
-                ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                progress = get_progress_indicator(updated_metadata.dict())
+                question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                ai_response = f"{progress}\n\n{question}"
                 await save_onboarding_metadata(db, user_id, updated_metadata)
                 return Command(update={"ai_response": ai_response}, goto="__end__")
 
@@ -308,7 +326,9 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 updated_metadata.field_attempts[target_field] = current_attempt + 1
                 new_attempt = updated_metadata.field_attempts[target_field]
                 print(f"⚠️ [{target_field}] 신뢰도 낮음 (conf={confidence:.2f}) - 명확화 요청")
-                ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                progress = get_progress_indicator(updated_metadata.dict())
+                question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                ai_response = f"{progress}\n\n{question}"
                 # 메타데이터 저장 후 종료
                 await save_onboarding_metadata(db, user_id, updated_metadata)
                 return Command(update={"ai_response": ai_response}, goto="__end__")
@@ -353,7 +373,8 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 next_attempt_count = updated_metadata.field_attempts.get(next_field, 0)
                 # attempts가 1이면 2차 질문, 2이면 3차 질문
                 next_question = field_template.get_question(min(next_attempt_count + 1, 3), name=user_name)
-                ai_response = next_question
+                progress = get_progress_indicator(updated_metadata.dict())
+                ai_response = f"{progress}\n\n{next_question}"
             elif next_field:
                 # 다른 필드로 이동 (성공 케이스)
                 next_template = get_field_template(next_field)
@@ -361,11 +382,15 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
                 # name이 방금 저장되었을 수 있으니 updated_metadata에서 다시 가져옴
                 next_question = next_template.get_question(1, name=updated_metadata.name)
 
-                # 간단한 확인 메시지 + 다음 질문
-                if getattr(updated_metadata, target_field):
-                    ai_response = f"{next_question}"
+                # 진행률 표시 + 다음 질문
+                progress = get_progress_indicator(updated_metadata.dict())
+
+                # 신입 특수 처리: job_years 생략 안내
+                if target_field == "total_years" and updated_metadata.total_years == "신입":
+                    skip_message = "💡 신입이시군요! 현재 직무 경력을 물어보는 질문은 생략되었습니다."
+                    ai_response = f"{skip_message}\n\n{progress}\n\n{next_question}"
                 else:
-                    ai_response = next_question
+                    ai_response = f"{progress}\n\n{next_question}"
             else:
                 # 완료 - 마지막 필드까지 저장 후 온보딩 완료 처리
                 print(f"💾 [OnboardingAgent] 온보딩 완료 - save_onboarding_metadata 호출 전")
@@ -382,7 +407,9 @@ async def onboarding_agent_node(state: OverallState, db, llm) -> Command[Literal
             updated_metadata.field_attempts[target_field] = current_attempt + 1
             new_attempt = updated_metadata.field_attempts[target_field]
             # new_attempt가 1이면 2차 질문, 2이면 3차 질문
-            ai_response = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+            progress = get_progress_indicator(updated_metadata.dict())
+            question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+            ai_response = f"{progress}\n\n{question}"
 
         # ========================================
         # 5. 메타데이터 저장 (온보딩 진행 중만)
