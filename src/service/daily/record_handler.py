@@ -78,8 +78,26 @@ async def handle_end_conversation(
         DailyRecordResponse: 처리 결과
     """
     from ...utils.utils import reset_session_data
+    from ...config.business_config import DAILY_TURNS_THRESHOLD
 
     logger.info(f"[DailyRecordHandler] 대화 종료 요청")
+
+    # 출석 요건 달성 여부 확인
+    current_daily_count = user_context.daily_record_count
+    logger.info(f"[DailyRecordHandler] 출석 체크: 현재 {current_daily_count}회 / 필요 {DAILY_TURNS_THRESHOLD}회")
+
+    # 출석 요건 미달성 시 확인 노티 (종료 차단)
+    if current_daily_count < DAILY_TURNS_THRESHOLD:
+        logger.info(f"[DailyRecordHandler] ⚠️ 출석 요건 미달성 ({current_daily_count}/{DAILY_TURNS_THRESHOLD}) → 종료 차단")
+
+        # 세션 유지 (종료하지 않음)
+        return DailyRecordResponse(
+            ai_response=f"{metadata.name}님, 오늘 출석이 아직 안 되었어요. 가능하면 조금 더 이야기 나눠주시면 좋을 것 같아요!",
+            should_update_session=False  # 세션 유지
+        )
+
+    # 출석 요건 달성 시 정상 종료
+    logger.info(f"[DailyRecordHandler] ✅ 출석 요건 달성 → 정상 종료")
     reset_session_data(user_context)
 
     return DailyRecordResponse(

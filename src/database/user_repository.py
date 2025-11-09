@@ -99,6 +99,7 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[Dict[str, An
         last_record_date=user.get("last_record_date"),
         created_at=user.get("created_at"),
         updated_at=user.get("updated_at"),
+        onboarding_completed_at=user.get("onboarding_completed_at"),
         daily_session_data=daily_session_data
     )
 
@@ -216,7 +217,7 @@ async def complete_onboarding(db, user_id: str) -> None:
     """온보딩 완료 처리 및 온보딩 데이터 정리
 
     온보딩이 완료되면:
-    1. onboarding_completed 플래그 설정
+    1. onboarding_completed 플래그 설정 + onboarding_completed_at 저장
     2. temp_data의 온보딩 컨텍스트 삭제 (daily_session_data는 유지)
     3. DB에 저장된 온보딩 턴 삭제 (혹시 있을 경우 대비)
 
@@ -224,9 +225,12 @@ async def complete_onboarding(db, user_id: str) -> None:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
     """
-    # 1. 온보딩 완료 플래그 설정
-    await db.create_or_update_user(user_id, {"onboarding_completed": True})
-    logger.info(f"[UserRepo] ✅ onboarding_completed = True")
+    # 1. 온보딩 완료 플래그 설정 + 완료 시점 저장
+    await db.create_or_update_user(user_id, {
+        "onboarding_completed": True,
+        "onboarding_completed_at": datetime.now().isoformat()
+    })
+    logger.info(f"[UserRepo] ✅ onboarding_completed = True, onboarding_completed_at = {datetime.now().isoformat()}")
 
     # 2. temp_data의 온보딩 컨텍스트 삭제
     conv_state = await db.get_conversation_state(user_id)

@@ -73,6 +73,7 @@ class UserContext(BaseModel):
     last_record_date: Optional[date] = None
     created_at: Optional[datetime] = None  # 사용자 생성 시간
     updated_at: Optional[datetime] = None  # 사용자 정보 최종 업데이트 시간
+    onboarding_completed_at: Optional[datetime] = None  # 온보딩 완료 시점
     daily_session_data: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 일일 세션 데이터 (대화 횟수 추적)
 
 

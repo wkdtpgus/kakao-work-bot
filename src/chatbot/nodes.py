@@ -56,13 +56,13 @@ async def router_node(state: OverallState, db) -> Command[Literal["onboarding_ag
 
         # 온보딩 완료 여부에 따라 라우팅 (State는 이미 캐시 포함)
         if user_context.onboarding_stage == OnboardingStage.COMPLETED:
-            # 온보딩 완료 당일 체크: created_at.date() == updated_at.date()
-            if user_context.created_at and user_context.updated_at:
-                created_date = user_context.created_at.date()
-                updated_date = user_context.updated_at.date()
+            # 온보딩 완료 당일 체크: onboarding_completed_at.date() == today
+            if user_context.onboarding_completed_at:
+                onboarding_completed_date = user_context.onboarding_completed_at.date()
+                today = datetime.now().date()
 
-                if created_date == updated_date:
-                    logger.info(f"[RouterNode] 🚫 온보딩 완료 당일 (created={created_date}, updated={updated_date}) - 일일기록 차단")
+                if onboarding_completed_date == today:
+                    logger.info(f"[RouterNode] 🚫 온보딩 완료 당일 (completed={onboarding_completed_date}, today={today}) - 일일기록 차단")
                     user_name = user_context.metadata.name if user_context.metadata else None
                     blocking_message = f"{user_name}님, 내일부터 업무기록을 시작할 수 있어요. 잊지 않도록 <3분커리어>가 알림할게요!" if user_name else "내일부터 업무기록을 시작할 수 있어요. 잊지 않도록 <3분커리어>가 알림할게요!"
                     return Command(update={"ai_response": blocking_message}, goto="__end__")

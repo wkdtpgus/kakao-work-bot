@@ -27,17 +27,24 @@ DEFAULT BEHAVIOR:
    - User responds positively: "응", "네", "없어", "괜찮아", "좋아"
 
 4. end_conversation: User wants to END the conversation
-   - Clear exit signals: "끝", "종료", "그만", "바이", "bye"
+   - Clear exit signals: "끝", "종료", "그만", "바이", "bye", "힘들어", "그만할래", "종료할래", "마칠게", "이제 그만"
+   - User expresses fatigue or wanting to stop: "피곤해", "힘들다", "그만하고 싶어"
 
-5. rejection: User EXPLICITLY REJECTS a bot's suggestion
-   - Clear refusal: "아니", "싫어", "나중에", "안 할래"
-   - Only for explicit rejections, NOT general conversation clarifications
+5. rejection: User EXPLICITLY REJECTS a bot's SUMMARY PROPOSAL ONLY
+   - CHECK [Previous bot] FIRST: Bot MUST have asked "정리해드릴까요?" or "요약해드릴까요?"
+   - ONLY THEN, if user refuses: "아니", "싫어", "나중에"
+   - NOT for "그만", "끝", "종료" - these are end_conversation
+   - NOT for general negative responses in work conversation (e.g., "없었어", "딱히", "별로")
+   - NOT for complaints or questions about the conversation (e.g., "왜 멈춰?", "왜 그래?")
+   - When in doubt, prefer end_conversation over rejection
 
 6. restart: User wants to start a completely new daily record session
    - Explicit restart requests: "처음부터 다시", "새로 시작", "리셋"
 
 7. continue: User wants to continue daily record conversation (DEFAULT)
    - Work-related conversation, task details, general responses
+   - Negative work-related answers: "없었어", "딱히", "별로", "그냥"
+   - Questions or complaints about conversation: "왜?", "왜 멈춰?", "왜 그래?"
    - Positive responses ("응", "좋아") when bot suggests STARTING conversation (NOT summary generation)
    - Conversation clarifications: "안했어", "선택 안했다니까", "그거 아니야"
 
@@ -47,6 +54,15 @@ CRITICAL RULES FOR SHORT RESPONSES ("응", "네", "좋아" etc.):
 - If bot offered to CREATE SUMMARY ("정리해드릴까요?", "요약해드릴까요?") → "summary"
 - If bot asked about EDITING summary ("수정하고 싶은 부분 있나요?") → "no_edit_needed"
 - Priority: Check conversation starters FIRST, then summary proposals
+
+INTENT PRIORITY (when ambiguous):
+1. end_conversation (explicit exit: "끝", "종료", "그만", "힘들어")
+2. restart (explicit restart: "처음부터", "리셋")
+3. summary (bot asked summary + user agrees)
+4. edit_summary (after summary + user requests changes)
+5. no_edit_needed (after summary + user satisfied)
+6. rejection (bot asked summary + user refuses) - LEAST priority
+7. continue (default for everything else)
 
 Response format: Only return one of: summary, edit_summary, no_edit_needed, end_conversation, rejection, continue, restart"""
 

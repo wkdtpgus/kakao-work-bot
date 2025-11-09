@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
 
     -- 온보딩 완료 여부
     onboarding_completed BOOLEAN DEFAULT FALSE,
+    onboarding_completed_at TIMESTAMP WITH TIME ZONE,
 
     -- 카운터
     attendance_count INTEGER DEFAULT 0,
@@ -34,9 +35,24 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 COMMENT ON TABLE users IS '사용자 프로필 및 온보딩 정보';
+COMMENT ON COLUMN users.onboarding_completed_at IS '온보딩 완료 시점 (당일 일일기록 차단용)';
 COMMENT ON COLUMN users.attendance_count IS '출석(일일기록) 누적 카운트 (리셋 없이 계속 증가, % 7 == 0일 때 주간 요약 생성)';
 COMMENT ON COLUMN users.daily_record_count IS '오늘의 대화 턴 수 (날짜 변경 시 0으로 리셋, 5회 이상이면 attendance_count 증가)';
 COMMENT ON COLUMN users.last_record_date IS '마지막 기록 날짜';
+
+-- users 테이블 updated_at 자동 업데이트 트리거
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================
 -- 2. conversation_states 테이블 (대화 상태)
