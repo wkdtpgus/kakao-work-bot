@@ -133,7 +133,6 @@ async def handle_edit_summary(
     """
     from ...database import prepare_daily_summary_data
     from .summary_generator import generate_daily_summary
-    from ...utils.utils import check_and_suggest_weekly_summary
 
     logger.info(f"[DailyRecordHandler] 요약 수정 요청 → 사용자 피드백 반영")
 
@@ -200,7 +199,6 @@ async def handle_summary_request(
     """
     from ...database import prepare_daily_summary_data
     from .summary_generator import generate_daily_summary
-    from ...utils.utils import check_and_suggest_weekly_summary
 
     logger.info(f"[DailyRecordHandler] 요약 생성 요청")
 
@@ -375,7 +373,6 @@ async def save_daily_conversation(
     Returns:
         (updated_daily_count, new_attendance)
     """
-    from ...utils.utils import save_and_increment
     from ...database import update_daily_session_data
 
     # 🚨 중요: 요약 생성 시에만 카운트 증가 안 함
@@ -466,3 +463,147 @@ async def process_daily_record(
     # 일반 대화 (질문 생성)
     else:
         return await handle_general_conversation(message, user_context, metadata, cached_today_turns, llm)
+
+
+# =============================================================================
+# Daily 헬퍼 함수 (utils.py에서 이동)
+# =============================================================================
+
+async def save_and_increment(
+    db,
+    user_id: str,
+    user_message: str,
+    ai_response: str,
+    user_context,  # UserContext 타입
+    is_summary: bool = False,
+    summary_type: Optional[str] = None,
+    should_increment: bool = True
+) -> Tuple[int, Optional[int]]:
+    """대화 저장 + daily_record_count 증가를 한 번에 처리
+
+    Args:
+        db: Database 인스턴스
+        user_id: 사용자 ID
+        user_message: 사용자 메시지
+        ai_response: AI 응답 메시지
+        user_context: UserContext 객체
+        is_summary: 요약 응답 여부
+        summary_type: 요약 타입 ('daily' 또는 'weekly')
+        should_increment: 카운트 증가 여부 (요약 생성 시에는 False)
+
+    Returns:
+        (updated_daily_count, new_attendance)
+        - updated_daily_count: 업데이트된 daily_record_count
+        - new_attendance: 5회 달성 시 새로운 출석 일수 (아니면 None)
+
+    Usage:
+        daily_agent_node에서 대화 저장 + 카운트 증가 로직 통합
+    """
+    from ...database import increment_counts_with_check
+
+    # 대화 저장
+    await db.save_conversation_turn(
+        user_id,
+        user_message,
+        ai_response,
+        is_summary=is_summary,
+        summary_type=summary_type if is_summary else None
+    )
+
+    # 카운트 증가 (필요 시)
+    if should_increment:
+        updated_daily_count, new_attendance = await increment_counts_with_check(db, user_id)
+
+        if new_attendance:
+            logger.info(f"[save_and_increment] 🎉 5회 달성! attendance_count 증가: {new_attendance}일차")
+            user_context.attendance_count = new_attendance
+
+        logger.info(f"[save_and_increment] daily_record_count 업데이트: {updated_daily_count}회")
+        return updated_daily_count, new_attendance
+    else:
+        # 카운트 증가 안 함 (현재 값 유지)
+        logger.info(f"[save_and_increment] 요약 생성 - daily_record_count 증가 안 함")
+        return user_context.daily_record_count, None
+
+
+async def check_and_suggest_weekly_summary(
+    db,
+    user_id: str,
+    user_context,  # UserContext 타입
+    current_attendance_count: int,
+    ai_response: str,
+    message: str,
+    is_summary: bool = True,
+    summary_type: str = 'daily'
+) -> Tuple[str, bool]:
+    """7일차 달성 시 주간 요약 제안 로직 (utils.py에서 이동)
+
+    Args:
+        db: Database 인스턴스
+        user_id: 사용자 ID
+        user_context: UserContext 객체
+        current_attendance_count: 현재 출석 일수
+        ai_response: 기본 AI 응답 (요약 텍스트 등)
+        message: 사용자 메시지
+        is_summary: 요약 응답 여부
+        summary_type: 요약 타입 ('daily' 등)
+
+    Returns:
+        (ai_response_with_suggestion, should_suggest_weekly)
+        - ai_response_with_suggestion: 주간 요약 제안 포함 응답
+        - should_suggest_weekly: 주간 요약 제안 여부 (True/False)
+
+    Usage:
+        daily_agent_node에서 요약 생성/수정 후 7일차 체크
+    """
+    from ...database import set_weekly_summary_flag
+    from ...config.business_config import DAILY_TURNS_THRESHOLD, WEEKLY_CYCLE_DAYS
+
+    current_daily_count = user_context.daily_record_count
+
+    # 주간 요약 주기 체크 (7, 14, 21일차 등)
+    if current_attendance_count > 0 and current_attendance_count % WEEKLY_CYCLE_DAYS == 0 and current_daily_count >= DAILY_TURNS_THRESHOLD:
+        # 중복 방지: 이미 주간요약 플래그가 있거나 이미 완료했으면 제안하지 않음
+        conv_state = await db.get_conversation_state(user_id)
+        temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+        weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
+
+        # 이번 주차에 주간요약을 이미 완료했는지 체크 (주차 단위 비교)
+        weekly_completed_at_count = temp_data.get("weekly_completed_at_count")
+        if weekly_completed_at_count:
+            # 주차 번호로 비교 (1~7일차: 1주차, 8~14일차: 2주차, ...)
+            current_week = (current_attendance_count - 1) // 7 + 1
+            completed_week = (weekly_completed_at_count - 1) // 7 + 1
+            already_completed_this_week = (current_week == completed_week)
+        else:
+            already_completed_this_week = False
+
+        if not weekly_summary_ready and not already_completed_this_week:
+            logger.info(f"[check_weekly_summary] 🎉 7일차 달성! (attendance={current_attendance_count}, daily={current_daily_count})")
+
+            # 주간 요약 제안 메시지 추가
+            ai_response_with_suggestion = f"{ai_response}\n\n🎉 7일차 달성! 주간 요약도 보여드릴까요?"
+
+            # 대화 저장
+            await db.save_conversation_turn(
+                user_id,
+                message,
+                ai_response_with_suggestion,
+                is_summary=is_summary,
+                summary_type=summary_type
+            )
+
+            # 주간 요약 플래그 설정
+            await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
+
+            return ai_response_with_suggestion, True
+        else:
+            if weekly_summary_ready:
+                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 플래그 존재 → 제안 생략")
+            elif already_completed_this_week:
+                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 완료 (completed_at={weekly_completed_at_count}) → 제안 생략")
+            # 플래그가 이미 있거나 완료되었으면 일반 요약으로 처리 (제안 없이)
+            return ai_response, False
+
+    # 7일차 아님
+    return ai_response, False

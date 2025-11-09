@@ -1,6 +1,12 @@
 """Daily Agent - 일일 기록 비즈니스 로직"""
 from .intent_classifier import classify_user_intent
-from .record_handler import process_daily_record, save_daily_conversation, DailyRecordResponse
+from .record_handler import (
+    process_daily_record,
+    save_daily_conversation,
+    DailyRecordResponse,
+    save_and_increment,
+    check_and_suggest_weekly_summary
+)
 from .summary_generator import generate_daily_summary
 
 __all__ = [
@@ -9,4 +15,6 @@ __all__ = [
     "save_daily_conversation",
     "DailyRecordResponse",
     "generate_daily_summary",
+    "save_and_increment",
+    "check_and_suggest_weekly_summary",
 ]
