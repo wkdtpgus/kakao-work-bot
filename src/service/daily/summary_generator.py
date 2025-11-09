@@ -6,8 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from ...prompt.daily_summary_prompt import (
     DAILY_SUMMARY_SYSTEM_PROMPT,
     DAILY_SUMMARY_USER_PROMPT,
-    DAILY_SUMMARY_EDIT_SYSTEM_PROMPT,
-    DAILY_SUMMARY_EDIT_USER_PROMPT
+    DAILY_SUMMARY_CORRECTION_INSTRUCTION
 )
 from ...utils.schemas import DailySummaryInput, DailySummaryOutput
 from langsmith import traceable
@@ -21,7 +20,7 @@ async def generate_daily_summary(
     input_data: DailySummaryInput,
     llm
 ) -> DailySummaryOutput:
-    """일일 요약 생성 또는 수정 (순수 LLM 호출)
+    """일일 요약 생성 (순수 LLM 호출)
 
     Args:
         input_data: Repository에서 준비한 입력 데이터 (DailySummaryInput)
@@ -31,52 +30,43 @@ async def generate_daily_summary(
         DailySummaryOutput: LLM이 생성한 요약 결과
     """
     try:
-        # 🔍 디버깅 로그 추가
-        logger.info(f"[DailySummary] 🔍 latest_summary 존재 여부: {input_data.latest_summary is not None}")
-        logger.info(f"[DailySummary] 🔍 latest_summary 길이: {len(input_data.latest_summary) if input_data.latest_summary else 0}")
-        logger.info(f"[DailySummary] 🔍 user_correction: {input_data.user_correction[:50] if input_data.user_correction else 'None'}")
-
-        # ===== 수정 모드 (latest_summary 존재) =====
-        if input_data.latest_summary:
-            logger.info("[DailySummary] ✅ 수정 모드 - 최신 요약 기반 수정")
-
-            # 수정 전용 프롬프트 사용
-            system_prompt = DAILY_SUMMARY_EDIT_SYSTEM_PROMPT
-            user_prompt = DAILY_SUMMARY_EDIT_USER_PROMPT.format(
-                user_correction=input_data.user_correction or "",
-                existing_summary=input_data.latest_summary
-            )
-
-        # ===== 생성 모드 (latest_summary 없음) =====
-        else:
-            logger.info("[DailySummary] 생성 모드 - 전체 대화 기반 요약")
-
-            # 사용자 메타데이터 텍스트 구성
-            user_metadata_text = f"""
+        # 사용자 메타데이터 텍스트 구성
+        user_metadata_text = f"""
 - 이름: {input_data.user_metadata.name}
 - 직무: {input_data.user_metadata.job_title}
 - 프로젝트: {input_data.user_metadata.project_name}
 - 커리어 목표: {input_data.user_metadata.career_goal}
 """
 
-            # 생성 전용 프롬프트 사용
-            system_prompt = DAILY_SUMMARY_SYSTEM_PROMPT
-            user_prompt = DAILY_SUMMARY_USER_PROMPT.format(
-                user_metadata=user_metadata_text,
-                conversation_turns=input_data.conversation_context
+        # 요약 프롬프트 구성
+        summary_prompt = DAILY_SUMMARY_USER_PROMPT.format(
+            user_metadata=user_metadata_text,
+            conversation_turns=input_data.conversation_context
+        )
+
+        # 시스템 프롬프트 구성 (수정 요청이 있으면 명시적으로 주입)
+        if input_data.user_correction:
+            logger.info(f"[DailySummary] 🔍 수정 요청 감지: {input_data.user_correction[:100]}")
+            correction_instruction = DAILY_SUMMARY_CORRECTION_INSTRUCTION.format(
+                user_correction=input_data.user_correction
             )
+            # 수정 지침을 맨 앞에 배치 (우선순위 강조)
+            system_prompt = correction_instruction + "\n\n" + DAILY_SUMMARY_SYSTEM_PROMPT
+            logger.info(f"[DailySummary] ✅ 수정 프롬프트 주입 완료 (맨 앞 배치)")
+        else:
+            system_prompt = DAILY_SUMMARY_SYSTEM_PROMPT
+            logger.info(f"[DailySummary] ℹ️ 일반 요약 생성 모드")
 
         # LLM 호출
         summary_response = await llm.ainvoke([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            HumanMessage(content=summary_prompt)
         ])
 
         summary_text = summary_response.content
 
-        mode = "수정" if input_data.latest_summary else "생성"
         logger.info(
-            f"[DailySummary] 요약 {mode} 완료 "
+            f"[DailySummary] 요약 생성 완료 "
             f"(attendance_count={input_data.attendance_count}일차, "
             f"daily_record_count={input_data.daily_record_count}회)"
         )
@@ -86,5 +76,5 @@ async def generate_daily_summary(
         )
 
     except Exception as e:
-        logger.error(f"[DailySummary] 요약 생성/수정 실패: {e}")
+        logger.error(f"[DailySummary] 요약 생성 실패: {e}")
         raise

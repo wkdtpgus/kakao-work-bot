@@ -137,29 +137,21 @@ async def handle_edit_summary(
 
     logger.info(f"[DailyRecordHandler] 요약 수정 요청 → 사용자 피드백 반영")
 
-    # 🔍 오늘 날짜의 최신 요약 조회 (edit_summary는 최신 요약 필요)
-    daily_summaries = await db.get_daily_summaries_v2(user_id, limit=1)
-
-    if not daily_summaries or len(daily_summaries) == 0:
-        return DailyRecordResponse(
-            ai_response=f"{metadata.name}님, 수정할 요약이 없습니다. 먼저 요약을 생성해주세요!"
-        )
-
-    latest_summary = daily_summaries[0]
-    latest_summary_text = latest_summary.get("summary_content", "")
-    logger.info(f"[DailyRecordHandler] 최신 요약 조회 완료 (날짜: {latest_summary.get('session_date')})")
+    # 요약 수정 시 오늘 전체 대화 조회 (기존 버전은 전체 대화 재분석)
+    today = datetime.now().date().isoformat()
+    all_today_turns = await db.get_conversation_history_by_date_v2(user_id, today, limit=50)
+    logger.info(f"[DailyRecordHandler] 수정용 전체 대화 조회: {len(all_today_turns)}턴")
 
     # user_data 캐시 전달 (중복 DB 쿼리 방지)
     user_data = _build_user_data(metadata, user_context)
 
-    # 요약 재생성 (latest_summary 전달 → 자동으로 수정 모드)
+    # 요약 재생성 (user_correction과 함께 전체 대화 전달)
     input_data = await prepare_daily_summary_data(
         db,
         user_id,
-        [],  # 전체 대화 턴 불필요 (수정 모드)
+        all_today_turns,
         user_correction=message,
-        user_data=user_data,
-        latest_summary=latest_summary_text
+        user_data=user_data
     )
     output = await generate_daily_summary(input_data, llm)
     ai_response = output.summary_text
@@ -294,11 +286,17 @@ async def handle_general_conversation(
     from ...config.business_config import SUMMARY_SUGGESTION_THRESHOLD
 
     current_session_count = user_context.daily_session_data.get("conversation_count", 0)
-    logger.info(f"[DailyRecordHandler] 일반 대화 진행 ({current_session_count + 1}회차)")
+
+    # 대화 횟수 먼저 증가
+    new_count = current_session_count + 1
+    user_context.daily_session_data["conversation_count"] = new_count
+
+    logger.info(f"[DailyRecordHandler] 일반 대화 진행 ({new_count}회차)")
+    logger.info(f"🔍 [DEBUG] new_count={new_count}, THRESHOLD={SUMMARY_SUGGESTION_THRESHOLD}, 조건={new_count >= SUMMARY_SUGGESTION_THRESHOLD}")
 
     # SUMMARY_SUGGESTION_THRESHOLD 이상 대화 시 요약 제안
-    if current_session_count >= SUMMARY_SUGGESTION_THRESHOLD:
-        logger.info(f"[DailyRecordHandler] {SUMMARY_SUGGESTION_THRESHOLD}회 이상 대화 완료 → 요약 제안")
+    if new_count >= SUMMARY_SUGGESTION_THRESHOLD:
+        logger.info(f"[DailyRecordHandler] {SUMMARY_SUGGESTION_THRESHOLD}회 대화 완료 → 요약 제안")
         return DailyRecordResponse(
             ai_response=f"{metadata.name}님, 오늘도 많은 이야기 나눠주셨네요! 지금까지 내용을 정리해드릴까요?"
         )
@@ -328,9 +326,7 @@ async def handle_general_conversation(
     response = await llm.ainvoke(messages)
     ai_response_final = response.content
 
-    # 대화 횟수 증가
-    user_context.daily_session_data["conversation_count"] = current_session_count + 1
-    logger.info(f"[DailyRecordHandler] ✅ 질문 생성 완료, 대화 횟수: {current_session_count} → {current_session_count + 1}")
+    logger.info(f"[DailyRecordHandler] ✅ 질문 생성 완료, 대화 횟수: {new_count}")
 
     return DailyRecordResponse(
         ai_response=ai_response_final
