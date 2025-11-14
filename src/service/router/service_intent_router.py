@@ -151,24 +151,29 @@ async def route_user_intent(
         # temp_data 조회
         temp_data = cached_conv_state.get("temp_data", {}) if cached_conv_state else {}
 
-        # 주말 + 평일 작성 일수 체크
+        # 날짜 및 주차 계산
         now = datetime.now()
         weekday = now.weekday()  # 0=월, 1=화, ..., 5=토, 6=일
         is_weekend = weekday >= 5
-
-        # 이번 주 평일 기록 수를 DB에서 동적으로 계산
-        from ...database.summary_repository import count_this_week_weekday_records
-        weekday_count = await count_this_week_weekday_records(db, user_context.user_id)
-
-        # ISO 주차 번호 계산 (current_week)
         current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
         weekly_completed_week = temp_data.get("weekly_completed_week")
+
+        # 🔥 최우선: 이미 완료했는지 체크 (다른 조건보다 먼저!)
+        already_completed_this_week = (weekly_completed_week == current_week) if weekly_completed_week else False
+        if already_completed_this_week:
+            logger.info(f"[IntentRouter] 주간 피드백 요청 BUT 이미 완료 (week={current_week}) → daily_agent_node")
+            detailed_intent = "weekly_already_completed"
+            return "daily_agent_node", UserIntent.DAILY_RECORD.value, detailed_intent
 
         # 주말 체크 (주간요약은 주말에만 가능)
         if not is_weekend:
             logger.info(f"[IntentRouter] 주간 피드백 요청 BUT 평일 → daily_agent_node (주말에만 가능 안내)")
             detailed_intent = "weekly_weekday_only"
             return "daily_agent_node", UserIntent.DAILY_RECORD.value, detailed_intent
+
+        # 이번 주 평일 기록 수를 DB에서 동적으로 계산
+        from ...database.summary_repository import count_this_week_weekday_records
+        weekday_count = await count_this_week_weekday_records(db, user_context.user_id)
 
         # 평일 작성이 없으면 안내
         if weekday_count == 0:
@@ -180,13 +185,6 @@ async def route_user_intent(
         if weekday_count < WEEKLY_SUMMARY_MIN_WEEKDAY_COUNT:
             logger.info(f"[IntentRouter] 주간 피드백 요청 BUT 평일 작성 부족 ({weekday_count}일) → daily_agent_node (안내 메시지)")
             detailed_intent = "weekly_insufficient"
-            return "daily_agent_node", UserIntent.DAILY_RECORD.value, detailed_intent
-
-        # 이미 완료했는지 체크
-        already_completed_this_week = (weekly_completed_week == current_week) if weekly_completed_week else False
-        if already_completed_this_week:
-            logger.info(f"[IntentRouter] 주간 피드백 요청 BUT 이미 완료 (week={current_week}) → daily_agent_node")
-            detailed_intent = "weekly_already_completed"
             return "daily_agent_node", UserIntent.DAILY_RECORD.value, detailed_intent
 
         # 모든 조건 충족 → 주간요약 v1.0 생성 시작

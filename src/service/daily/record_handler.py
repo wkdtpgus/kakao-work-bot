@@ -485,7 +485,7 @@ async def process_daily_record(
     elif "weekly_already_completed" in user_intent:
         # router에서 이미 체크되어 weekly_agent_node로 가지 않고 여기로 라우팅됨
         return DailyRecordResponse(
-            ai_response="이번 주 주간요약은 이미 완료하셨어요! 다음 주에 다시 만나요 😊",
+            ai_response="이번 주 주간요약은 이미 완료하셨어요! 다음 주에 새로운 주간요약이 생성되어요 😊",
             early_return=True
         )
 
