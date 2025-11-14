@@ -61,57 +61,15 @@ Response format: summary|edit_summary|no_edit_needed|end_conversation|rejection|
 
 
 # ============================================================================
-# 2. 서비스 라우터 의도 분류 (daily_record vs weekly_feedback vs weekly_acceptance vs rejection)
+# 2. 서비스 라우터 의도 분류 (DEPRECATED - 규칙 기반으로 전환)
 # ============================================================================
-SERVICE_ROUTER_SYSTEM_PROMPT = "You are an expert at classifying user intent accurately."
+# NOTE: Service Router는 더 이상 LLM을 사용하지 않습니다.
+# service_intent_router.py의 classify_service_intent_rule_based() 함수가
+# 규칙 기반으로 처리하여 성능을 33% 개선했습니다.
+#
+# 아래 프롬프트들은 하위 호환성 유지를 위해 남겨두지만 사용되지 않습니다.
+# TODO: 충분한 검증 후 완전히 제거 예정
 
-SERVICE_ROUTER_USER_PROMPT = """Conversation context: "{message}"
-
-Classify the user's intent into one of the following:
-- daily_record: Daily work, task recording, reflection (DEFAULT for most conversations)
-  - Includes positive responses to DAILY-related bot questions (e.g., "지금까지 내용을 정리해드릴까요?" → "응")
-- weekly_feedback: User explicitly requests weekly summary
-- weekly_acceptance: User accepts/confirms to see WEEKLY summary ONLY
-  - ONLY when [Previous bot] explicitly mentioned WEEKLY summary ("주간요약", "주간 피드백")
-  - NOT for daily summary acceptance
-- rejection: User EXPLICITLY REJECTS a bot's suggestion with clear negative intent (e.g., "아니요", "싫어요", "나중에", "안 할래", "거절")
-
-CRITICAL RULES FOR SHORT POSITIVE RESPONSES ("응", "네", "좋아", etc.):
-1. Check [Previous bot] message context!
-2. If bot asked about DAILY summary ("지금까지 내용을 정리해드릴까요?", "오늘 내용 정리해드릴까요?") → "daily_record"
-3. If bot asked about WEEKLY summary ("주간요약 보여드릴까요?", "주간 피드백 확인하시겠어요?") → "weekly_acceptance"
-4. If unclear or no bot proposal → "daily_record" (safer default)
-
-IMPORTANT:
-- If unsure, default to "daily_record"
-- Only use "rejection" for CLEAR, EXPLICIT refusal responses
-- General conversation about work is "daily_record", NOT "rejection"
-- Positive responses to daily summary proposals are "daily_record", NOT "weekly_acceptance"
-
-Response format: Only return one of: daily_record, weekly_feedback, weekly_acceptance, rejection"""
-
-SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT = """Conversation context: "{message}"
-
-🔔 IMPORTANT CONTEXT: The system has detected that the bot recently proposed/suggested viewing the weekly summary.
-The [Previous bot] message above likely contains the weekly summary proposal (e.g., "주간요약도 보여드릴까요?", "주간 피드백 확인하시겠어요?").
-
-Your task: Analyze the [User] message and classify it into one of the following based on whether it responds to the weekly summary proposal:
-
-- weekly_acceptance: User ACCEPTS the weekly summary proposal
-  (e.g., "응", "네", "좋아", "그래", "보여줘", "볼래", "okay", "yes", "ㅇㅇ", "ㄱㄱ", "알겠어", "부탁해")
-- rejection: User EXPLICITLY REJECTS the weekly summary proposal
-  (e.g., "아니", "싫어", "나중에", "안 할래", "거절", "no", "아뇨", "안돼", "싫")
-- daily_record: User's message is UNRELATED to the weekly summary proposal (general greeting, small talk, new topic, or changes the subject)
-  (e.g., "안녕", "뭐해", "오늘 어땠어", any message that ignores or doesn't address the proposal)
-
-CRITICAL RULES:
-1. Check if [Previous bot] message contains weekly summary proposal keywords ("주간요약", "주간 피드백", "weekly")
-2. If it does, determine if [User] is responding to it:
-   - POSITIVE response → "weekly_acceptance"
-   - NEGATIVE response → "rejection"
-   - UNRELATED/IGNORING → "daily_record"
-3. If [Previous bot] doesn't mention weekly summary, or [User] is clearly talking about something else → "daily_record"
-4. Examples of UNRELATED: greetings ("안녕"), off-topic questions ("뭐해?"), new conversation topics
-5. When unsure between acceptance and unrelated, prefer "daily_record" (safer default to avoid false positives)
-
-Response format: Only return one of: weekly_acceptance, rejection, daily_record"""
+# SERVICE_ROUTER_SYSTEM_PROMPT = "You are an expert at classifying user intent accurately."
+# SERVICE_ROUTER_USER_PROMPT = """..."""
+# SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT = """..."""

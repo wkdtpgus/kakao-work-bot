@@ -44,6 +44,10 @@ async def get_user_with_context(db, user_id: str) -> Tuple[Optional[Dict[str, An
             else:
                 logger.info(f"[UserRepo] 온보딩 시작 전")
 
+        # 신규 사용자는 users 레코드를 생성하지 않음
+        # (온보딩 완료 시 complete_onboarding에서 생성)
+        logger.info(f"[UserRepo] 신규 사용자 감지 - user_id={user_id} (온보딩 대기)")
+
         user_context = UserContext(
             user_id=user_id,
             onboarding_stage=onboarding_stage,

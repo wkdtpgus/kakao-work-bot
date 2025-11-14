@@ -381,3 +381,49 @@ async def prepare_weekly_feedback_data(
     except Exception as e:
         logger.error(f"[SummaryRepoV2] 주간 피드백 데이터 준비 중 오류: {e}")
         raise
+
+
+# =============================================================================
+# 주간요약 조건 체크 헬퍼 함수
+# =============================================================================
+
+async def count_this_week_weekday_records(db, user_id: str) -> int:
+    """이번 주 평일(월~금) 일일 요약 개수를 DB에서 동적으로 계산
+
+    Args:
+        db: Database 인스턴스
+        user_id: 카카오 사용자 ID
+
+    Returns:
+        int: 이번 주 평일 일일 요약 개수 (0 이상)
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        now = datetime.now()
+
+        # 이번 주 월요일 계산
+        weekday = now.weekday()  # 0=월, 1=화, ..., 6=일
+        days_since_monday = weekday
+        monday = (now - timedelta(days=days_since_monday)).date()
+
+        # 이번 주 금요일 계산
+        friday = monday + timedelta(days=4)
+
+        # DB에서 이번 주 월~금 사이의 일일 요약 개수 조회
+        # ai_answer_messages 테이블에서 is_summary=TRUE, summary_type='daily'인 레코드 카운트
+        records = await db.get_summaries_between_dates(
+            user_id=user_id,
+            start_date=monday.isoformat(),
+            end_date=friday.isoformat(),
+            summary_type='daily'
+        )
+
+        count = len(records) if records else 0
+        logger.info(f"[SummaryRepo] 이번 주 평일 일일 요약 개수: {count} (기간: {monday} ~ {friday})")
+
+        return count
+
+    except Exception as e:
+        logger.warning(f"[SummaryRepo] 이번 주 평일 기록 개수 조회 실패: {e}, 기본값 0 반환")
+        return 0

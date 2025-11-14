@@ -1,7 +1,7 @@
 """LLM 호출 서비스 레이어 - 노드별 비즈니스 로직"""
 
 # Router
-from .router import route_user_intent, classify_service_intent
+from .router import route_user_intent
 
 # Daily Agent
 from .daily import (
@@ -22,7 +22,6 @@ from .weekly import (
 __all__ = [
     # Router
     "route_user_intent",
-    "classify_service_intent",
     # Daily
     "classify_user_intent",
     "process_daily_record",

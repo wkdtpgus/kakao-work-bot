@@ -383,10 +383,10 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
 
         # QnA 세션 비활성
         else:
-            # v2.0 완료 후 반복 접근 체크
+            # v2.0 완료 후 반복 접근 체크 (ISO 주차 번호 사용)
             from datetime import datetime
             now = datetime.now()
-            current_week = now.strftime("%Y-W%U")
+            current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
             weekly_completed_week = temp_data.get("weekly_completed_week")
 
             if weekly_completed_week == current_week:
@@ -416,8 +416,17 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
             await db.save_conversation_turn(user_id, message, ai_response, is_summary=False)
             logger.info(f"[WeeklyAgent] 티키타카 대화 저장")
 
+        # 🔥 캐시 갱신: 세션 상태가 변경되었으므로 Service Router가 최신 상태를 볼 수 있도록 업데이트
+        updated_conv_state = await db.get_conversation_state(user_id)
+
         logger.info(f"[WeeklyAgent] 처리 완료: {ai_response[:50]}...")
-        return Command(update={"ai_response": ai_response}, goto="__end__")
+        return Command(
+            update={
+                "ai_response": ai_response,
+                "cached_conv_state": updated_conv_state  # 🔥 캐시 갱신
+            },
+            goto="__end__"
+        )
 
     except Exception as e:
         logger.error(f"[WeeklyAgent] Error: {e}")

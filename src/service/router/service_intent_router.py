@@ -11,27 +11,19 @@ Service Intent Router
 
 import logging
 from typing import Tuple, Optional
-from langchain_core.messages import SystemMessage, HumanMessage
-from ...prompt.intent_prompts import (
-    SERVICE_ROUTER_SYSTEM_PROMPT,
-    SERVICE_ROUTER_USER_PROMPT,
-    SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT
-)
 
 logger = logging.getLogger(__name__)
 
 
-async def classify_service_intent(
+def classify_service_intent_rule_based(
     message: str,
-    llm,
     cached_conv_state: Optional[dict] = None
 ) -> Tuple[str, bool]:
     """
-    최상위 서비스 의도 분류 (daily vs weekly vs rejection)
+    규칙 기반 서비스 의도 분류 (LLM 제거 - 성능 최적화)
 
     Args:
         message: 사용자 메시지 (맥락 포함 가능)
-        llm: LangChain LLM 인스턴스
         cached_conv_state: 캐시된 conversation_state (weekly 플래그 체크용)
 
     Returns:
@@ -39,44 +31,47 @@ async def classify_service_intent(
         - intent: "daily_record" | "weekly_feedback" | "weekly_acceptance" | "rejection"
         - has_weekly_flag: 주간 요약 플래그 존재 여부
     """
-    try:
-        # ===== 플래그/상태 기반 우선 라우팅 =====
-        # weekly_summary_ready 플래그 또는 weekly_summary_pending 상태이면 주간 요약 제안 상태
-        has_weekly_flag = False
-        if cached_conv_state:
-            temp_data = cached_conv_state.get("temp_data", {})
-            current_step = cached_conv_state.get("current_step", "")
-            has_weekly_flag = (
-                temp_data.get("weekly_summary_ready", False) or
-                current_step == "weekly_summary_pending"
-            )
+    # ===== 플래그/상태 기반 우선 라우팅 =====
+    has_weekly_flag = False
+    if cached_conv_state:
+        temp_data = cached_conv_state.get("temp_data", {})
+        current_step = cached_conv_state.get("current_step", "")
+        has_weekly_flag = (
+            temp_data.get("weekly_summary_ready", False) or
+            current_step == "weekly_summary_pending"
+        )
 
-        # ===== LLM 기반 의도 분류 =====
-        # 플래그 있음: 주간요약 제안 컨텍스트 포함 3-way 분류 (weekly_acceptance / rejection / daily_record)
-        # 플래그 없음: 일반 4-way 분류 (daily_record / weekly_feedback / weekly_acceptance / rejection)
-        if has_weekly_flag:
-            # 주간 요약 제안 상태 → 컨텍스트 포함 프롬프트 사용
-            user_prompt = SERVICE_ROUTER_USER_PROMPT_WITH_WEEKLY_CONTEXT.format(message=message)
-            logger.info(f"[IntentRouter] 플래그 있음 → 주간요약 컨텍스트 포함 LLM 분류")
-        else:
-            # 일반 상태 → 기본 프롬프트 사용
-            user_prompt = SERVICE_ROUTER_USER_PROMPT.format(message=message)
-            logger.info(f"[IntentRouter] 플래그 없음 → 일반 LLM 분류")
+    message_lower = message.lower().strip()
 
-        response = await llm.ainvoke([
-            SystemMessage(content=SERVICE_ROUTER_SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt)
-        ])
+    # ===== 규칙 기반 분류 =====
 
-        intent = response.content.strip().lower()
+    # 1. 플래그 있을 때: 주간 요약 제안에 대한 응답 분류
+    if has_weekly_flag:
+        # 거절 키워드 (우선순위 높음)
+        rejection_keywords = ["아니", "싫어", "나중에", "안 할래", "됐어", "거절", "no", "아뇨", "안돼", "싫"]
+        if any(keyword in message_lower for keyword in rejection_keywords):
+            logger.info(f"[IntentRouter] 규칙 기반: 거절 키워드 감지 → rejection")
+            return "rejection", has_weekly_flag
 
-        logger.info(f"[IntentRouter] LLM 분류 결과: {intent}, weekly_flag={has_weekly_flag}")
+        # 수락 키워드
+        acceptance_keywords = ["응", "네", "좋아", "그래", "보여줘", "볼래", "okay", "yes", "ㅇㅇ", "ㄱㄱ", "알겠어", "부탁"]
+        if any(keyword in message_lower for keyword in acceptance_keywords):
+            logger.info(f"[IntentRouter] 규칙 기반: 수락 키워드 감지 → weekly_acceptance")
+            return "weekly_acceptance", has_weekly_flag
 
-        return intent, has_weekly_flag
+        # 명확하지 않으면 daily_record (사용자가 다른 주제로 전환)
+        logger.info(f"[IntentRouter] 규칙 기반: 플래그 있으나 명확한 응답 없음 → daily_record")
+        return "daily_record", has_weekly_flag
 
-    except Exception as e:
-        logger.error(f"[IntentRouter] LLM 의도 분류 실패: {e}, 기본값 daily_record 반환")
-        return "daily_record", False
+    # 2. 플래그 없을 때: 주간요약 요청 키워드 체크
+    weekly_keywords = ["주간요약", "주간 요약", "주간피드백", "주간 피드백", "위클리", "weekly"]
+    if any(keyword in message_lower for keyword in weekly_keywords):
+        logger.info(f"[IntentRouter] 규칙 기반: 주간요약 키워드 감지 → weekly_feedback")
+        return "weekly_feedback", has_weekly_flag
+
+    # 3. 기본값: daily_record
+    logger.info(f"[IntentRouter] 규칙 기반: 기본값 → daily_record")
+    return "daily_record", has_weekly_flag
 
 
 async def route_user_intent(
@@ -106,8 +101,28 @@ async def route_user_intent(
     from ..daily.intent_classifier import classify_user_intent
     from ...database.conversation_repository import handle_rejection_flag
 
-    # 1. 최상위 의도 분류
-    intent, has_weekly_flag = await classify_service_intent(message, llm, cached_conv_state)
+    # 0. 🔥 최우선 체크: 주간 QnA 세션 활성화 여부 OR 주간 완료 후 반복 접근
+    if cached_conv_state:
+        temp_data = cached_conv_state.get("temp_data", {})
+        qna_session = temp_data.get("weekly_qna_session", {})
+
+        # 티키타카 진행 중
+        if qna_session.get("active"):
+            logger.info(f"[IntentRouter] 🔥 QnA 세션 활성 감지 → weekly_agent_node (최우선 라우팅)")
+            return "weekly_agent_node", UserIntent.WEEKLY_FEEDBACK.value, None
+
+        # v2.0 완료 후 반복 접근 체크 (이번 주 완료했으면 weekly로 라우팅하여 마무리 멘트 출력)
+        from datetime import datetime
+        now = datetime.now()
+        current_week = now.isocalendar()[1]
+        weekly_completed_week = temp_data.get("weekly_completed_week")
+
+        if weekly_completed_week == current_week:
+            logger.info(f"[IntentRouter] 🔥 주간 완료 후 반복 접근 감지 → weekly_agent_node (마무리 멘트)")
+            return "weekly_agent_node", UserIntent.WEEKLY_FEEDBACK.value, None
+
+    # 1. 최상위 의도 분류 (규칙 기반 - LLM 제거)
+    intent, has_weekly_flag = classify_service_intent_rule_based(message, cached_conv_state)
 
     # 2. 거절 처리 (주간 요약 제안 거절 → 플래그 정리)
     if intent == "rejection":
@@ -133,22 +148,20 @@ async def route_user_intent(
         from datetime import datetime
         from ...config.business_config import WEEKLY_SUMMARY_MIN_WEEKDAY_COUNT
 
-        # temp_data에서 weekday_record_count 및 세션 상태 조회
+        # temp_data 조회
         temp_data = cached_conv_state.get("temp_data", {}) if cached_conv_state else {}
-        qna_session = temp_data.get("weekly_qna_session", {})
-
-        # QnA 세션이 활성화되어 있으면 무조건 weekly_agent_node로 (티키타카 진행 중)
-        if qna_session.get("active"):
-            logger.info(f"[IntentRouter] QnA 세션 활성 → weekly_agent_node (티키타카 진행)")
-            return "weekly_agent_node", UserIntent.WEEKLY_FEEDBACK.value, None
 
         # 주말 + 평일 작성 일수 체크
         now = datetime.now()
         weekday = now.weekday()  # 0=월, 1=화, ..., 5=토, 6=일
         is_weekend = weekday >= 5
 
-        weekday_count = temp_data.get("weekday_record_count", 0)
-        current_week = temp_data.get("weekday_count_week")
+        # 이번 주 평일 기록 수를 DB에서 동적으로 계산
+        from ...database.summary_repository import count_this_week_weekday_records
+        weekday_count = await count_this_week_weekday_records(db, user_context.user_id)
+
+        # ISO 주차 번호 계산 (current_week)
+        current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
         weekly_completed_week = temp_data.get("weekly_completed_week")
 
         # 주말 체크 (주간요약은 주말에만 가능)

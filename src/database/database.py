@@ -791,3 +791,52 @@ class Database:
         except Exception as e:
             print(f"❌ [DB V2] LLM용 히스토리 변환 실패: {e}")
             return []
+
+    async def get_summaries_between_dates(
+        self,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+        summary_type: str = 'daily'
+    ) -> list:
+        """특정 기간 동안의 요약 메시지 조회 (V2 스키마)"""
+        if not self.supabase:
+            return []
+
+        try:
+            # message_history와 ai_answer_messages 조인하여 조회
+            response = self.supabase.table("message_history") \
+                .select("session_date, ai_answer_messages(uuid, content, summary_type, created_at)") \
+                .eq("kakao_user_id", user_id) \
+                .gte("session_date", start_date) \
+                .lte("session_date", end_date) \
+                .execute()
+
+            if not response.data:
+                return []
+
+            # ai_answer_messages에서 is_summary=TRUE인 레코드만 필터링
+            summaries = []
+            for row in response.data:
+                ai_message = row.get("ai_answer_messages")
+                session_date = row.get("session_date")
+
+                if ai_message and isinstance(ai_message, dict):
+                    # summary_type 필터링
+                    if ai_message.get("summary_type") == summary_type:
+                        summaries.append({
+                            "uuid": ai_message.get("uuid"),
+                            "content": ai_message.get("content"),
+                            "session_date": session_date,
+                            "created_at": ai_message.get("created_at"),
+                            "summary_type": ai_message.get("summary_type")
+                        })
+
+            print(f"✅ [DB V2] 기간별 요약 조회 완료: {user_id} ({start_date} ~ {end_date}) - {len(summaries)}개")
+            return summaries
+
+        except Exception as e:
+            print(f"❌ [DB V2] 기간별 요약 조회 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return []

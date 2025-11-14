@@ -212,9 +212,9 @@ async def generate_weekly_v2(
     temp_data = conv_state.get("temp_data", {}) if conv_state else {}
     temp_data["weekly_qna_session"] = session
 
-    # 이번 주 완료 표시
+    # 이번 주 완료 표시 (ISO 주차 번호 사용)
     now = datetime.now()
-    current_week = now.strftime("%Y-W%U")
+    current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
     temp_data["weekly_completed_week"] = current_week
 
     # current_step 유지
