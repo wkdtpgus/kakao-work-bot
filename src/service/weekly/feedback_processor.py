@@ -205,15 +205,15 @@ async def generate_weekly_v2(
     )
 
     # 세션 종료 + weekly_completed_week 설정 (중복 방지)
-    from datetime import datetime
+    from ...config import get_kst_now
 
     session["active"] = False
     conv_state = await db.get_conversation_state(user_id)
     temp_data = conv_state.get("temp_data", {}) if conv_state else {}
     temp_data["weekly_qna_session"] = session
 
-    # 이번 주 완료 표시 (ISO 주차 번호 사용)
-    now = datetime.now()
+    # 이번 주 완료 표시 (ISO 주차 번호 사용, 한국 시간 기준)
+    now = get_kst_now()
     current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
     temp_data["weekly_completed_week"] = current_week
 

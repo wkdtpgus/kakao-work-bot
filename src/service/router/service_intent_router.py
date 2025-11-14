@@ -112,8 +112,8 @@ async def route_user_intent(
             return "weekly_agent_node", UserIntent.WEEKLY_FEEDBACK.value, None
 
         # v2.0 완료 후 반복 접근 체크 (이번 주 완료했으면 weekly로 라우팅하여 마무리 멘트 출력)
-        from datetime import datetime
-        now = datetime.now()
+        from ...config import get_kst_now
+        now = get_kst_now()
         current_week = now.isocalendar()[1]
         weekly_completed_week = temp_data.get("weekly_completed_week")
 
@@ -145,14 +145,13 @@ async def route_user_intent(
 
     # 4. 주간 피드백 명시적 요청
     elif intent == "weekly_feedback":
-        from datetime import datetime
-        from ...config.business_config import WEEKLY_SUMMARY_MIN_WEEKDAY_COUNT
+        from ...config import get_kst_now, WEEKLY_SUMMARY_MIN_WEEKDAY_COUNT
 
         # temp_data 조회
         temp_data = cached_conv_state.get("temp_data", {}) if cached_conv_state else {}
 
-        # 날짜 및 주차 계산
-        now = datetime.now()
+        # 날짜 및 주차 계산 (한국 시간 기준)
+        now = get_kst_now()
         weekday = now.weekday()  # 0=월, 1=화, ..., 5=토, 6=일
         is_weekend = weekday >= 5
         current_week = now.isocalendar()[1]  # ISO 주차 (1-53)

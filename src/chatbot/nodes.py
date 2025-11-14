@@ -383,9 +383,9 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
 
         # QnA 세션 비활성
         else:
-            # v2.0 완료 후 반복 접근 체크 (ISO 주차 번호 사용)
-            from datetime import datetime
-            now = datetime.now()
+            # v2.0 완료 후 반복 접근 체크 (ISO 주차 번호 사용, 한국 시간 기준)
+            from ..config import get_kst_now
+            now = get_kst_now()
             current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
             weekly_completed_week = temp_data.get("weekly_completed_week")
 
