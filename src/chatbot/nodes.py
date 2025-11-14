@@ -1,9 +1,8 @@
 from .state import OverallState, UserContext, UserMetadata, OnboardingStage, OnboardingResponse, UserIntent
 from ..service import (
     generate_weekly_feedback,
-    calculate_current_week_day,
-    format_partial_weekly_feedback,
     format_no_record_message,
+    format_insufficient_weekday_message,
 )
 from ..service.onboarding import (
     handle_first_onboarding,
@@ -348,119 +347,76 @@ async def daily_agent_node(state: OverallState, db) -> Command[Literal["__end__"
 
 @traceable(name="weekly_agent_node")
 async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__"]]:
-    """주간 피드백 생성 및 DB 저장 (Repository 함수 활용)
+    """주간 피드백 생성 및 DB 저장 (세션 기반 분기)
 
     호출 경로:
-    1. service_router_node → 7일차 달성 후 사용자 수락 시 (weekly_acceptance)
-    2. service_router_node → 사용자가 수동으로 주간 피드백 요청 (weekly_feedback)
+    1. service_router_node → 사용자가 주간 피드백 요청
+    2. QnA 세션 상태에 따라 분기:
+       - active=false → v1.0 + 역질문 생성
+       - active=true → 역질문 티키타카 진행
     """
+    from ..service.weekly.feedback_processor import (
+        handle_weekly_v1_request,
+        handle_weekly_qna_response
+    )
 
     user_id = state["user_id"]
     message = state["message"]
     user_context = state["user_context"]
     metadata = user_context.metadata  # UserMetadata 추출
 
-    logger.info(f"[WeeklyAgent] user_id={user_id}, message={message}")
+    logger.info(f"[WeeklyAgent] user_id={user_id}, message={message[:50]}")
 
-    # LLM 인스턴스 가져오기 (캐시됨) - 주간요약은 summary_llm 사용 (max_tokens 300)
-    llm = get_summary_llm()
+    # LLM 인스턴스 가져오기 (캐시됨)
+    llm = get_chat_llm()
 
     try:
-        # Repository 함수로 주간 요약 플래그 확인
-        is_ready, stored_attendance_count = await get_weekly_summary_flag(db, user_id)
+        # 세션 상태 확인
+        conv_state = await db.get_conversation_state(user_id)
+        temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+        qna_session = temp_data.get("weekly_qna_session", {})
 
-        # 7일차 자동 트리거 (플래그만 확인, daily_agent_node에서 이미 검증됨)
-        if is_ready and stored_attendance_count:
-            logger.info(f"[WeeklyAgent] 7일차 주간요약 생성 (attendance_count={stored_attendance_count})")
+        # QnA 세션이 활성화 상태 → 티키타카 진행 중
+        if qna_session.get("active"):
+            logger.info(f"[WeeklyAgent] QnA 세션 활성 → 티키타카 진행")
+            result = await handle_weekly_qna_response(db, user_id, message, llm)
 
-            # 주간 피드백 생성
-            # user_data 캐시 전달 (중복 DB 쿼리 방지)
-            user_data = {
-                "name": metadata.name,
-                "job_title": metadata.job_title,
-                "career_goal": metadata.career_goal
-            }
-            input_data = await prepare_weekly_feedback_data(db, user_id, user_data=user_data)
-            output = await generate_weekly_feedback(input_data, llm)
-            weekly_summary = output.feedback_text
-
-            # Repository 함수로 플래그 정리
-            await clear_weekly_summary_flag(db, user_id)
-            logger.info(f"[WeeklyAgent] 정식 주간요약 완료 → 플래그 정리")
-
-            ai_response = weekly_summary
-
-        # 수동 요청인 경우 (7일 미달 체크)
+        # QnA 세션 비활성
         else:
-            logger.info(f"[WeeklyAgent] 수동 요청")
+            # v2.0 완료 후 반복 접근 체크
+            from datetime import datetime
+            now = datetime.now()
+            current_week = now.strftime("%Y-W%U")
+            weekly_completed_week = temp_data.get("weekly_completed_week")
 
-            from ..config.business_config import WEEKLY_CYCLE_DAYS
+            if weekly_completed_week == current_week:
+                # 이번 주 이미 완료 → 완료 메시지 반복
+                logger.info(f"[WeeklyAgent] v2.0 완료 후 반복 접근 → 완료 메시지")
+                ai_response = "이번 주 주간요약이 완료되었어요! 다음 주에도 열심히 기록해봐요! 😊"
+                return Command(update={"ai_response": ai_response}, goto="__end__")
 
-            # user_context에서 attendance_count 가져오기
-            current_count = user_context.attendance_count
+            # v1.0 + 역질문 생성
+            logger.info(f"[WeeklyAgent] QnA 세션 비활성 → v1.0 + 역질문 생성")
+            result = await handle_weekly_v1_request(db, user_id, metadata, llm)
 
-            # 0일차: 일일기록 시작 전
-            if current_count == 0:
-                logger.info(f"[WeeklyAgent] 0일차 (일일기록 시작 전)")
-                ai_response = format_no_record_message()
+        ai_response = result.ai_response
 
-                # 일반 대화로 저장
-                await db.save_conversation_turn(user_id, message, ai_response, is_summary=False)
+        # 대화 저장 (v2.0은 generate_weekly_v2에서 이미 저장됨)
+        if result.is_summary and result.summary_type != 'weekly_v2':
+            await db.save_conversation_turn(
+                user_id,
+                message,
+                ai_response,
+                is_summary=result.is_summary,
+                summary_type=result.summary_type
+            )
+            logger.info(f"[WeeklyAgent] 저장 완료: summary_type={result.summary_type}")
+        elif not result.is_summary:
+            # 티키타카 중간 대화
+            await db.save_conversation_turn(user_id, message, ai_response, is_summary=False)
+            logger.info(f"[WeeklyAgent] 티키타카 대화 저장")
 
-            # 1~6일차: 참고용 피드백 제공
-            elif current_count % WEEKLY_CYCLE_DAYS != 0:
-                # 현재 주차 내 일차 계산 (헬퍼 함수 사용)
-                current_day_in_week = calculate_current_week_day(current_count)
-                logger.info(f"[WeeklyAgent] {WEEKLY_CYCLE_DAYS}일 미달 (현재 {current_day_in_week}일차) → 참고용 피드백 제공")
-
-                # 임시 피드백 생성
-                # user_data 캐시 전달 (중복 DB 쿼리 방지)
-                user_data = {
-                    "name": metadata.name,
-                    "job_title": metadata.job_title,
-                    "career_goal": metadata.career_goal
-                }
-                input_data = await prepare_weekly_feedback_data(db, user_id, user_data=user_data)
-                output = await generate_weekly_feedback(input_data, llm)
-                partial_feedback = output.feedback_text
-
-                # 헬퍼 함수로 응답 포맷팅
-                ai_response = format_partial_weekly_feedback(current_day_in_week, partial_feedback)
-
-                # 참고용은 summary_type='daily'로 저장
-                await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='daily')
-
-            # 7, 14, 21일차: 정식 주간요약 제공 (플래그 없어도 OK)
-            else:
-                logger.info(f"[WeeklyAgent] 7일차 이후 수동 요청 → 정식 주간요약 제공")
-
-                # 정식 주간요약 생성
-                user_data = {
-                    "name": metadata.name,
-                    "job_title": metadata.job_title,
-                    "career_goal": metadata.career_goal
-                }
-                input_data = await prepare_weekly_feedback_data(db, user_id, user_data=user_data)
-                output = await generate_weekly_feedback(input_data, llm)
-                ai_response = output.feedback_text
-
-                # 플래그가 있으면 정리 (이전에 거절했다가 다시 요청한 경우)
-                if is_ready:
-                    await clear_weekly_summary_flag(db, user_id)
-                    logger.info(f"[WeeklyAgent] 수동 요청이지만 플래그 있음 → 플래그 정리")
-
-                # 정식 주간요약으로 저장
-                await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='weekly')
-
-            # 수동 요청 조기 리턴 (0일차, 1-6일차, 7일차 이후)
-            logger.info(f"[WeeklyAgent] 수동 요청 완료: {ai_response[:50]}...")
-            return Command(update={"ai_response": ai_response}, goto="__end__")
-
-        # 정식 주간요약 대화 저장 (is_ready=True인 경우만)
-        await db.save_conversation_turn(user_id, message, ai_response, is_summary=True, summary_type='weekly')
-
-        logger.info(f"[WeeklyAgent] 주간 피드백 생성 완료: {ai_response[:50]}...")
-
+        logger.info(f"[WeeklyAgent] 처리 완료: {ai_response[:50]}...")
         return Command(update={"ai_response": ai_response}, goto="__end__")
 
     except Exception as e:

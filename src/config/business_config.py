@@ -21,23 +21,12 @@ SUMMARY_SUGGESTION_THRESHOLD = 4
 - 변경 시 영향: record_handler.py, record_processor.py
 """
 
-# 주간 요약 생성을 위한 최소 일일 요약 개수
-WEEKLY_SUMMARY_MIN_DAILY_COUNT = 5
-"""주간 요약 생성에 필요한 최소 일일 요약 개수
-- 일일 요약이 이 개수 미만이면 주간 요약 생성 불가
-- 일반적으로 DAILY_TURNS_THRESHOLD보다 1-2 크게 설정 (품질 보장)
-- 변경 시 영향: summary_repository.py
-"""
-
-# =============================================================================
-# 출석 관련 상수
-# =============================================================================
-
-# 주간 요약 주기 (일 단위)
-WEEKLY_CYCLE_DAYS = 7
-"""주간 요약 생성 주기
-- attendance_count가 이 값의 배수일 때 주간 요약 제안
-- 변경 시 영향: utils.py, summary_repository.py, weekly 모듈
+# 주간 요약 생성을 위한 최소 평일 작성 일수
+WEEKLY_SUMMARY_MIN_WEEKDAY_COUNT = 2
+"""주간 요약 생성에 필요한 최소 평일(월~금) 작성 일수
+- 평일 작성이 이 개수 미만이면 주간 요약 제안 안 함
+- 주말(토요일 오후 6시)에만 제안
+- 변경 시 영향: record_handler.py, summary_repository.py
 """
 
 # =============================================================================

@@ -145,12 +145,12 @@ async def get_all_summaries_v2(
 ) -> list:
     """모든 요약 조회 (V2 스키마)
 
-    summary_messages_view를 통해 요약 조회
+    ai_answer_messages 테이블에서 is_summary=TRUE인 메시지 조회
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
-        summary_type: 요약 타입 ('daily', 'weekly', None이면 전체)
+        summary_type: 요약 타입 ('daily', 'weekly_v1', 'weekly_v2', None이면 전체)
         limit: 조회할 요약 개수
 
     Returns:
@@ -160,9 +160,10 @@ async def get_all_summaries_v2(
         if not db.supabase:
             return []
 
-        query = db.supabase.table("summary_messages_view") \
-            .select("*") \
-            .eq("kakao_user_id", user_id)
+        query = db.supabase.table("ai_answer_messages") \
+            .select("uuid, kakao_user_id, content, summary_type, created_at") \
+            .eq("kakao_user_id", user_id) \
+            .eq("is_summary", True)
 
         if summary_type:
             query = query.eq("summary_type", summary_type)
@@ -184,47 +185,50 @@ async def get_all_summaries_v2(
 
 
 # =============================================================================
-# V2 스키마 - 7일차 체크 로직
+# V2 스키마 - 주간 요약 준비 체크 로직 (평일 기반)
 # =============================================================================
 
 async def check_weekly_summary_ready(
     db,
     user_id: str,
-    attendance_count: int
+    weekday_record_count: int = None
 ) -> Tuple[bool, int]:
-    """주간 요약 생성 준비 여부 체크 (V2 스키마)
+    """주간 요약 생성 준비 여부 체크 (V2 스키마 - 평일 기반)
 
-    attendance_count가 7의 배수이고, 실제 일일 요약이 5개 이상인지 확인
+    이번 주 평일(월~금) 작성 일수가 2일 이상인지 확인
+    주말(토~일)에만 제공 가능
 
     Args:
         db: Database 인스턴스
         user_id: 카카오 사용자 ID
-        attendance_count: 현재 출석 카운트
+        weekday_record_count: 이번 주 평일 작성 일수 (None이면 자동 조회)
 
     Returns:
-        (is_ready, daily_summary_count): 준비 여부와 일일 요약 개수
+        (is_ready, weekday_count): 준비 여부와 평일 작성 일수
     """
     try:
-        from ..config.business_config import WEEKLY_SUMMARY_MIN_DAILY_COUNT, WEEKLY_CYCLE_DAYS
+        from datetime import datetime
 
-        # 주기의 배수가 아니면 준비 안 됨
-        if attendance_count == 0 or attendance_count % WEEKLY_CYCLE_DAYS != 0:
-            return False, 0
+        # weekday_record_count가 전달되지 않으면 temp_data에서 조회
+        if weekday_record_count is None:
+            conv_state = await db.get_conversation_state(user_id)
+            temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+            weekday_record_count = temp_data.get("weekday_record_count", 0)
 
-        # 최근 주기 내 일일 요약 조회
-        daily_summaries = await db.get_daily_summaries_v2(user_id, limit=WEEKLY_CYCLE_DAYS)
-        daily_count = len(daily_summaries)
+        # 주말(토~일) 체크
+        now = datetime.now()
+        weekday = now.weekday()  # 0=월, 1=화, ..., 5=토, 6=일
+        is_weekend = weekday >= 5
 
-        # WEEKLY_SUMMARY_MIN_DAILY_COUNT 이상이어야 주간 요약 생성
-        is_ready = daily_count >= WEEKLY_SUMMARY_MIN_DAILY_COUNT
+        # 평일 2일 이상 작성 + 주말이면 준비 완료
+        is_ready = is_weekend and weekday_record_count >= 2
 
         logger.info(
             f"[SummaryRepoV2] 주간 요약 준비 체크: "
-            f"attendance={attendance_count}, daily_count={daily_count}, "
-            f"required={WEEKLY_SUMMARY_MIN_DAILY_COUNT}, ready={is_ready}"
+            f"weekday_count={weekday_record_count}, is_weekend={is_weekend}, ready={is_ready}"
         )
 
-        return is_ready, daily_count
+        return is_ready, weekday_record_count
 
     except Exception as e:
         logger.error(f"[SummaryRepoV2] 주간 요약 준비 체크 중 오류: {e}")

@@ -573,12 +573,12 @@ class Database:
                 print(f"❌ [DB V2] message_history 저장 실패")
                 return None
 
-            history_uuid = history_response.data[0]["uuid"]
+            history_id = history_response.data[0]["id"]
 
             print(f"✅ [DB V2] 대화 턴 저장 완료: {user_id} - 턴 #{turn_index}")
 
             return {
-                "history_uuid": history_uuid,
+                "history_id": history_id,
                 "user_uuid": user_uuid,
                 "ai_uuid": ai_uuid,
                 "turn_index": turn_index,

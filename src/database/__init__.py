@@ -10,7 +10,9 @@ from .user_repository import (
     check_and_reset_daily_count,
     increment_counts_with_check,
     save_onboarding_metadata,
-    complete_onboarding
+    complete_onboarding,
+    increment_weekday_record_count,
+    get_weekday_record_count
 )
 
 # Conversation Repository
@@ -44,6 +46,8 @@ __all__ = [
     "increment_counts_with_check",
     "save_onboarding_metadata",
     "complete_onboarding",
+    "increment_weekday_record_count",
+    "get_weekday_record_count",
 
     # Conversation Repository
     "get_today_conversations",

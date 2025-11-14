@@ -145,7 +145,7 @@ async def check_and_reset_daily_count(db, user_id: str) -> Tuple[int, bool]:
 
 
 async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[int]]:
-    """daily_record_count 증가 및 5회 달성 시 attendance_count 증가
+    """daily_record_count 증가 및 평일 4회 달성 시 attendance_count 증가
 
     Args:
         db: Database 인스턴스
@@ -154,20 +154,29 @@ async def increment_counts_with_check(db, user_id: str) -> Tuple[int, Optional[i
     Returns:
         (new_daily_count, new_attendance_count):
             - new_daily_count: 증가된 daily_record_count
-            - new_attendance_count: 5회 달성 시 증가된 attendance_count, 아니면 None
+            - new_attendance_count: 평일 4회 달성 시 증가된 attendance_count, 아니면 None
     """
     from ..config.business_config import DAILY_TURNS_THRESHOLD
+    from datetime import datetime
 
     # daily_record_count 증가
     new_daily_count = await db.increment_daily_record_count(user_id)
 
-    # DAILY_TURNS_THRESHOLD 달성 시 attendance_count 증가
+    # DAILY_TURNS_THRESHOLD 달성 시 평일 여부 체크 후 attendance_count 증가
     if new_daily_count == DAILY_TURNS_THRESHOLD:
-        user = await db.get_user(user_id)
-        current_attendance = user.get("attendance_count", 0) if user else 0
-        new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
-        logger.info(f"[UserRepo] 🎉 {DAILY_TURNS_THRESHOLD}회 달성! attendance: {current_attendance} → {new_attendance}일차")
-        return new_daily_count, new_attendance
+        now = datetime.now()
+        weekday = now.weekday()  # 0=월, 1=화, ..., 4=금, 5=토, 6=일
+
+        # 평일(월~금)만 attendance_count 증가
+        if weekday <= 4:
+            user = await db.get_user(user_id)
+            current_attendance = user.get("attendance_count", 0) if user else 0
+            new_attendance = await db.increment_attendance_count(user_id, new_daily_count)
+            logger.info(f"[UserRepo] 🎉 {DAILY_TURNS_THRESHOLD}회 달성 (평일)! attendance: {current_attendance} → {new_attendance}일차")
+            return new_daily_count, new_attendance
+        else:
+            logger.info(f"[UserRepo] {DAILY_TURNS_THRESHOLD}회 달성했지만 주말이므로 attendance_count 증가 안 함")
+            return new_daily_count, None
 
     return new_daily_count, None
 
@@ -312,3 +321,84 @@ async def get_onboarding_history(db, user_id: str) -> Tuple[int, list]:
     # 온보딩 실패 패턴은 field_attempts로 감지
 
     return total_count, recent_turns[:3]  # 최근 3개만 반환
+
+
+async def increment_weekday_record_count(db, user_id: str) -> int:
+    """이번 주 평일 작성 일수 증가 (월~금만 카운트)
+
+    주간요약 제공 조건 체크를 위해 이번 주 평일 작성 일수를 추적합니다.
+    매주 월요일 자동 리셋됩니다.
+
+    Args:
+        db: Database 인스턴스
+        user_id: 카카오 사용자 ID
+
+    Returns:
+        new_weekday_count: 업데이트된 이번 주 평일 작성 일수
+    """
+    from datetime import datetime
+
+    now = datetime.now()
+    weekday = now.weekday()  # 0=월, 1=화, ..., 4=금, 5=토, 6=일
+
+    # 평일(월~금)만 카운트
+    if weekday > 4:  # 토요일(5), 일요일(6)
+        logger.info(f"[WeekdayCount] 주말 작성 - 카운트 증가 안 함")
+        return await get_weekday_record_count(db, user_id)
+
+    # conversation_states.temp_data에서 카운트 조회
+    conv_state = await db.get_conversation_state(user_id)
+    temp_data = conv_state.get("temp_data", {}) if conv_state else {}
+
+    # 주차 계산 (매주 월요일 리셋)
+    current_week = now.strftime("%Y-W%U")  # 예: "2025-W02"
+    last_week = temp_data.get("weekday_count_week")
+
+    # 오늘 이미 카운트했는지 체크 (중복 방지)
+    last_record_date = temp_data.get("last_weekday_record_date")
+    today = now.date().isoformat()
+
+    if last_record_date == today:
+        # 오늘 이미 카운트함 (중복 방지)
+        current_count = temp_data.get("weekday_record_count", 0)
+        logger.info(f"[WeekdayCount] 오늘 이미 카운트됨: {current_count}일")
+        return current_count
+
+    if last_week != current_week:
+        # 새로운 주 시작 → 리셋
+        logger.info(f"[WeekdayCount] 새로운 주 시작: {last_week} → {current_week}, 리셋")
+        new_count = 1
+    else:
+        # 같은 주 → 증가
+        current_count = temp_data.get("weekday_record_count", 0)
+        new_count = current_count + 1
+
+    # 저장
+    temp_data["weekday_record_count"] = new_count
+    temp_data["weekday_count_week"] = current_week
+    temp_data["last_weekday_record_date"] = today
+
+    # current_step 유지
+    current_step = conv_state.get("current_step", "daily_recording") if conv_state else "daily_recording"
+
+    await db.upsert_conversation_state(user_id, current_step=current_step, temp_data=temp_data)
+
+    logger.info(f"[WeekdayCount] 이번 주 평일 작성 카운트: {new_count}일")
+    return new_count
+
+
+async def get_weekday_record_count(db, user_id: str) -> int:
+    """현재 주 평일 작성 일수 조회
+
+    Args:
+        db: Database 인스턴스
+        user_id: 카카오 사용자 ID
+
+    Returns:
+        weekday_count: 이번 주 평일 작성 일수
+    """
+    conv_state = await db.get_conversation_state(user_id)
+    if not conv_state:
+        return 0
+    temp_data = conv_state.get("temp_data", {})
+    return temp_data.get("weekday_record_count", 0)

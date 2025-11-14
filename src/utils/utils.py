@@ -47,9 +47,6 @@ def is_onboarding_complete(current_state: Dict[str, Any]) -> bool:
 # -----------------------------------------------------------------------------
 # 1. 대화 히스토리 처리 관련
 # -----------------------------------------------------------------------------
-# Note: extract_last_bot_message, enhance_message_with_context는
-# src/service/router/message_enhancer.py로 이동되었습니다.
-
 
 def format_conversation_history(
     messages: List[Dict[str, str]],
@@ -84,19 +81,6 @@ def format_conversation_history(
         history_lines.append(f"{role}: {content}")
 
     return "\n".join(history_lines) if history_lines else "(첫 메시지)"
-
-
-# -----------------------------------------------------------------------------
-# 2. 온보딩 관련 공통 로직 (service/onboarding/onboarding_handler.py로 이동)
-# -----------------------------------------------------------------------------
-# - save_onboarding_conversation() → service/onboarding/onboarding_handler.py
-# - update_onboarding_state() → service/onboarding/onboarding_handler.py
-
-
-# -----------------------------------------------------------------------------
-# 4. 7일차 체크 및 주간 요약 제안 (service/daily/record_handler.py로 이동)
-# -----------------------------------------------------------------------------
-# - check_and_suggest_weekly_summary() → service/daily/record_handler.py
 
 
 # -----------------------------------------------------------------------------

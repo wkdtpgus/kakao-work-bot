@@ -379,7 +379,7 @@ async def save_daily_conversation(
     result: DailyRecordResponse,
     user_context
 ) -> Tuple[int, Optional[int]]:
-    """일일 대화 저장 + 카운트 증가 + 세션 업데이트 통합 처리
+    """일일 대화 저장 + 카운트 증가 + 평일 카운트 통합 처리
 
     Args:
         db: Database 인스턴스
@@ -391,7 +391,7 @@ async def save_daily_conversation(
     Returns:
         (updated_daily_count, new_attendance)
     """
-    from ...database import update_daily_session_data
+    from ...database import update_daily_session_data, increment_weekday_record_count
 
     # 🚨 중요: 요약 생성 시에만 카운트 증가 안 함
     # - 요약 수정(edit_summary)은 실제 대화 내용을 반영하므로 카운트 O
@@ -405,6 +405,17 @@ async def save_daily_conversation(
         summary_type=result.summary_type if result.is_summary_response else None,
         should_increment=should_increment
     )
+
+    # 평일 작성 카운트 증가 (월~금만, 요약 완료 시점에만)
+    if result.is_summary_response and result.summary_type == 'daily':
+        weekday_count = await increment_weekday_record_count(db, user_id)
+        logger.info(f"[DailyRecordHandler] 평일 작성 카운트: {weekday_count}일")
+
+        # TODO: 평일 2일 이상 작성 시 알림톡 예약 (카카오 비즈니스 플랫폼 연동 필요)
+        # if weekday_count >= 2:
+        #     from ...service.notification.kakao_alimtalk import schedule_weekly_summary_notification
+        #     send_time = calculate_next_saturday_6pm()
+        #     await schedule_weekly_summary_notification(user_id, send_time)
 
     # 세션 데이터 업데이트
     await update_daily_session_data(
@@ -453,6 +464,37 @@ async def process_daily_record(
     # 오늘 기록 없이 요약 요청한 경우
     if "no_record_today" in user_intent:
         return await handle_no_record_today(user_context, metadata)
+
+    # 주간요약 관련 안내 메시지
+    elif "weekly_no_record" in user_intent:
+        from ..weekly.fallback_handler import format_no_record_message
+        return DailyRecordResponse(
+            ai_response=format_no_record_message(),
+            early_return=True
+        )
+
+    elif "weekly_insufficient" in user_intent:
+        from ..weekly.fallback_handler import format_insufficient_weekday_message
+        from ...database import get_weekday_record_count
+        weekday_count = await get_weekday_record_count(db, user_id)
+        return DailyRecordResponse(
+            ai_response=format_insufficient_weekday_message(weekday_count),
+            early_return=True
+        )
+
+    elif "weekly_already_completed" in user_intent:
+        # router에서 이미 체크되어 weekly_agent_node로 가지 않고 여기로 라우팅됨
+        return DailyRecordResponse(
+            ai_response="이번 주 주간요약은 이미 완료하셨어요! 다음 주에 다시 만나요 😊",
+            early_return=True
+        )
+
+    elif "weekly_weekday_only" in user_intent:
+        # 평일에 주간요약 요청한 경우
+        return DailyRecordResponse(
+            ai_response="주간요약은 주말(토요일 오후 6시 이후)에만 가능해요! 평일에는 일일기록을 꾸준히 작성해주세요 😊",
+            early_return=True
+        )
 
     # 거절 (요약 제안 거절)
     elif "rejection" in user_intent:
@@ -554,74 +596,27 @@ async def check_and_suggest_weekly_summary(
     is_summary: bool = True,
     summary_type: str = 'daily'
 ) -> Tuple[str, bool]:
-    """7일차 달성 시 주간 요약 제안 로직 (utils.py에서 이동)
+    """주간 요약 제안 로직 (Service Router로 완전 이관 - 하위 호환성 유지용)
+
+    NOTE: 모든 주간요약 조건 체크는 service_intent_router.py에서 처리됨.
+    Daily Agent는 제안하지 않음. 알림톡을 통해 사용자가 직접 요청하도록 유도.
 
     Args:
         db: Database 인스턴스
         user_id: 사용자 ID
         user_context: UserContext 객체
-        current_attendance_count: 현재 출석 일수
+        current_attendance_count: 현재 출석 일수 (사용 안 함 - 하위 호환성 유지)
         ai_response: 기본 AI 응답 (요약 텍스트 등)
         message: 사용자 메시지
         is_summary: 요약 응답 여부
         summary_type: 요약 타입 ('daily' 등)
 
     Returns:
-        (ai_response_with_suggestion, should_suggest_weekly)
-        - ai_response_with_suggestion: 주간 요약 제안 포함 응답
-        - should_suggest_weekly: 주간 요약 제안 여부 (True/False)
+        (ai_response, False) - 항상 제안하지 않음
 
     Usage:
-        daily_agent_node에서 요약 생성/수정 후 7일차 체크
+        daily_agent_node에서 요약 생성/수정 후 호출 (하위 호환성 유지)
     """
-    from ...database import set_weekly_summary_flag
-    from ...config.business_config import DAILY_TURNS_THRESHOLD, WEEKLY_CYCLE_DAYS
-
-    current_daily_count = user_context.daily_record_count
-
-    # 주간 요약 주기 체크 (7, 14, 21일차 등)
-    if current_attendance_count > 0 and current_attendance_count % WEEKLY_CYCLE_DAYS == 0 and current_daily_count >= DAILY_TURNS_THRESHOLD:
-        # 중복 방지: 이미 주간요약 플래그가 있거나 이미 완료했으면 제안하지 않음
-        conv_state = await db.get_conversation_state(user_id)
-        temp_data = conv_state.get("temp_data", {}) if conv_state else {}
-        weekly_summary_ready = temp_data.get("weekly_summary_ready", False)
-
-        # 이번 주차에 주간요약을 이미 완료했는지 체크 (주차 단위 비교)
-        weekly_completed_at_count = temp_data.get("weekly_completed_at_count")
-        if weekly_completed_at_count:
-            # 주차 번호로 비교 (1~7일차: 1주차, 8~14일차: 2주차, ...)
-            current_week = (current_attendance_count - 1) // 7 + 1
-            completed_week = (weekly_completed_at_count - 1) // 7 + 1
-            already_completed_this_week = (current_week == completed_week)
-        else:
-            already_completed_this_week = False
-
-        if not weekly_summary_ready and not already_completed_this_week:
-            logger.info(f"[check_weekly_summary] 🎉 7일차 달성! (attendance={current_attendance_count}, daily={current_daily_count})")
-
-            # 주간 요약 제안 메시지 추가
-            ai_response_with_suggestion = f"{ai_response}\n\n🎉 7일차 달성! 주간 요약도 보여드릴까요?"
-
-            # 대화 저장
-            await db.save_conversation_turn(
-                user_id,
-                message,
-                ai_response_with_suggestion,
-                is_summary=is_summary,
-                summary_type=summary_type
-            )
-
-            # 주간 요약 플래그 설정
-            await set_weekly_summary_flag(db, user_id, current_attendance_count, user_context.daily_session_data)
-
-            return ai_response_with_suggestion, True
-        else:
-            if weekly_summary_ready:
-                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 플래그 존재 → 제안 생략")
-            elif already_completed_this_week:
-                logger.info(f"[check_weekly_summary] 7일차지만 이미 주간요약 완료 (completed_at={weekly_completed_at_count}) → 제안 생략")
-            # 플래그가 이미 있거나 완료되었으면 일반 요약으로 처리 (제안 없이)
-            return ai_response, False
-
-    # 7일차 아님
+    # Service Router가 모든 조건을 체크하므로 Daily Agent는 제안하지 않음
+    logger.info(f"[check_weekly_summary] Daily Agent 제안 로직 비활성화 (Service Router로 이관)")
     return ai_response, False

@@ -15,9 +15,8 @@ from .daily import (
 # Weekly Agent
 from .weekly import (
     generate_weekly_feedback,
-    calculate_current_week_day,
-    format_partial_weekly_feedback,
     format_no_record_message,
+    format_insufficient_weekday_message,
 )
 
 __all__ = [
@@ -32,7 +31,6 @@ __all__ = [
     "generate_daily_summary",
     # Weekly
     "generate_weekly_feedback",
-    "calculate_current_week_day",
-    "format_partial_weekly_feedback",
     "format_no_record_message",
+    "format_insufficient_weekday_message",
 ]

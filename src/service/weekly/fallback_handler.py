@@ -1,43 +1,20 @@
-"""주간 피드백 참고용 응답 생성 (7일 미달 시)"""
+"""주간 피드백 메시지 포맷팅 (평일 기반)"""
 
 
-def calculate_current_week_day(attendance_count: int) -> int:
-    """현재 주차 내 일차 계산
-
-    Args:
-        attendance_count: 전체 출석 일수
-
-    Returns:
-        int: 주차 내 일차 (1-6, 0은 WEEKLY_CYCLE_DAYS로 변환)
-
-    Examples:
-        8 → 1, 9 → 2, 14 → 0 → 7, 15 → 1
-    """
-    from ...config.business_config import WEEKLY_CYCLE_DAYS
-
-    remainder = attendance_count % WEEKLY_CYCLE_DAYS
-    return remainder if remainder > 0 else WEEKLY_CYCLE_DAYS
+def format_no_record_message() -> str:
+    """일일기록 시작 전 응답 메시지"""
+    return "아직 일일기록을 시작하지 않으셨어요. 평일에 일일기록을 작성하고 주말에 주간요약을 확인해보세요!"
 
 
-def format_partial_weekly_feedback(current_day: int, feedback_text: str) -> str:
-    """7일 미달 시 참고용 주간 피드백 응답 포맷팅
+def format_insufficient_weekday_message(weekday_count: int) -> str:
+    """평일 작성 일수 부족 시 응답 메시지
 
     Args:
-        current_day: 현재 주차 내 일차 (1-6)
-        feedback_text: LLM이 생성한 피드백 본문
+        weekday_count: 현재 주 평일 작성 일수
 
     Returns:
         str: 포맷팅된 응답 메시지
     """
-    return f"""아직 {current_day}일차예요. 7일차 달성 시 정식 주간요약이 생성되어 저장됩니다.
+    return f"""이번 주 평일 작성이 {weekday_count}일이에요. 주간요약은 평일 2일 이상 작성 후 주말에 제공됩니다.
 
-📌 지금까지의 활동 (참고용)
-
-{feedback_text}
-
-💡 이 내용은 참고용이며, 정식 주간요약이 아닙니다. 일일기록을 7회 완료하면 3분커리어가 자동으로 주간요약을 제안해요!"""
-
-
-def format_no_record_message() -> str:
-    """0일차 (일일기록 시작 전) 응답 메시지"""
-    return "아직 일일기록을 시작하지 않으셨어요. 일일기록을 7회 완료하면 주간요약을 확인하실 수 있어요!"
+💡 평일(월~금)에 일일기록을 작성하고 주말에 주간요약을 받아보세요!"""
