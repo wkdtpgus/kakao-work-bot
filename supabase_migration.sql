@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS user_answer_messages (
     uuid UUID PRIMARY KEY DEFAULT gen_random_uuid() UNIQUE,
     kakao_user_id TEXT NOT NULL,
     content TEXT NOT NULL,
+    is_review BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
     CONSTRAINT fk_user_answer_user
@@ -119,7 +120,11 @@ CREATE TABLE IF NOT EXISTS user_answer_messages (
 CREATE INDEX IF NOT EXISTS idx_user_answer_messages_user
 ON user_answer_messages(kakao_user_id);
 
+CREATE INDEX IF NOT EXISTS idx_user_answer_messages_review
+ON user_answer_messages(kakao_user_id, is_review);
+
 COMMENT ON TABLE user_answer_messages IS '사용자 응답 메시지';
+COMMENT ON COLUMN user_answer_messages.is_review IS '주간 소감/리뷰 메시지 여부';
 
 -- ============================================
 -- 4. ai_answer_messages 테이블 (AI 응답 메시지)

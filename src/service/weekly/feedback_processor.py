@@ -73,7 +73,8 @@ async def handle_weekly_v1_request(
     await db.upsert_conversation_state(user_id, current_step=current_step, temp_data=temp_data)
 
     # 응답 포맷팅
-    response = f"{v1_output.feedback_text}\n\n💬 궁금한 점이 있어요:\n"
+    intro_message = "이번 주에 기록한 것들을 정리해봤어요! 요약 하단의 질문들에 답해주시면 내용을 더 구체화해서 최종 요약을 만들어드릴게요 😊\n\n"
+    response = f"{intro_message}{v1_output.feedback_text}\n\n💬 궁금한 점이 있어요:\n"
     for i, q in enumerate(follow_up_output.questions, 1):
         response += f"{i}. {q}\n"
 
@@ -216,6 +217,7 @@ async def generate_weekly_v2(
     now = get_kst_now()
     current_week = now.isocalendar()[1]  # ISO 주차 (1-53)
     temp_data["weekly_completed_week"] = current_week
+    temp_data["user_shared_weekly_thoughts"] = False  # 새 주차 시작 시 리셋됨
 
     # current_step 유지
     current_step = conv_state.get("current_step", "weekly_completed") if conv_state else "weekly_completed"
@@ -223,8 +225,12 @@ async def generate_weekly_v2(
 
     logger.info(f"[WeeklyV2] v2.0 생성 완료, 세션 종료")
 
+    # v2.0 요약 상단에 소감 요청 메시지 추가
+    intro_message = "이번 주 회고를 마지막으로 정리했어요!\n아래 내용을 확인하시고, 이번 주에 대한 소감이나 자신에게 하고 싶은 응원의 한마디를 들려주세요. 서비스에 대한 리뷰도 좋습니다. 😊\n\n"
+    outro_message = "\n\n마지막 한마디 들려주시겠어요?"
+
     return WeeklyFeedbackResponse(
-        ai_response=f"{v2_summary}\n\n수고하셨어요! 다음 주에도 열심히 기록해봐요! 😊",
+        ai_response=f"{intro_message}{v2_summary}{outro_message}",
         is_summary=True,
         summary_type='weekly_v2'
     )

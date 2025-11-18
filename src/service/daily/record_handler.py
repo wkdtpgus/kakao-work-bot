@@ -258,22 +258,27 @@ async def handle_restart_request(
     user_context,
     metadata
 ) -> DailyRecordResponse:
-    """재시작 요청 처리
+    """재시작 요청 처리 (온보딩 완료 사용자만 호출됨)
+
+    온보딩 미완료 사용자는 router_node에서 onboarding_agent_node로 라우팅되므로
+    이 함수는 항상 온보딩 완료 사용자만 처리합니다.
 
     Args:
         user_context: UserContext 객체
         metadata: UserMetadata 객체
 
     Returns:
-        DailyRecordResponse: 처리 결과
+        DailyRecordResponse: 온보딩 수정 불가 안내 + 일일 기록 재시작
     """
     from ...utils.utils import reset_session_data
 
-    logger.info(f"[DailyRecordHandler] 재시작 요청 → 세션 초기화")
+    logger.info(f"[DailyRecordHandler] 재시작 요청 → 세션 초기화 + 온보딩 수정 불가 안내")
     reset_session_data(user_context)
 
     return DailyRecordResponse(
-        ai_response=f"{metadata.name}님, 새로운 일일 기록을 시작하겠습니다! 오늘은 어떤 업무를 하셨나요?"
+        ai_response=(
+            f"온보딩 정보(이름, 직무, 목표) 수정은 불가능해요.\n\n{metadata.name}님, 새로운 일일 기록을 시작하겠습니다! 오늘은 어떤 업무를 하셨나요?"
+        )
     )
 
 

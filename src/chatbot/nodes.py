@@ -29,8 +29,6 @@ from ..database import (
     complete_onboarding,
     check_and_reset_daily_count,
     get_today_conversations,
-    get_weekly_summary_flag,
-    clear_weekly_summary_flag,
     prepare_weekly_feedback_data,
 )
 
@@ -390,9 +388,33 @@ async def weekly_agent_node(state: OverallState, db) -> Command[Literal["__end__
             weekly_completed_week = temp_data.get("weekly_completed_week")
 
             if weekly_completed_week == current_week:
-                # 이번 주 이미 완료 → 완료 메시지 반복
-                logger.info(f"[WeeklyAgent] v2.0 완료 후 반복 접근 → 완료 메시지")
-                ai_response = "이번 주 주간요약이 완료되었어요! 다음 주에도 열심히 기록해봐요! 😊"
+                # 이번 주 이미 완료
+                # 사용자가 v2.0 후 소감을 남긴 경우 확인
+                user_shared_thoughts = temp_data.get("user_shared_weekly_thoughts", False)
+
+                if not user_shared_thoughts:
+                    # 첫 응답 → 사용자의 소감/응원 메시지로 간주하고 저장
+                    logger.info(f"[WeeklyAgent] v2.0 완료 후 첫 응답 → 소감 저장 (is_review=True)")
+
+                    # 사용자의 소감 저장 (is_review=True로 구분)
+                    ai_response = "소중한 한마디 감사합니다! 다음 주에도 열심히 기록하며 성장해봐요! 😊"
+                    await db.save_conversation_turn(
+                        user_id,
+                        message,
+                        ai_response,
+                        is_summary=False,
+                        is_review=True
+                    )
+
+                    # 플래그 설정하여 이후 응답은 완료 메시지만 표시
+                    temp_data["user_shared_weekly_thoughts"] = True
+                    current_step_val = conv_state.get("current_step", "weekly_completed") if conv_state else "weekly_completed"
+                    await db.upsert_conversation_state(user_id, current_step=current_step_val, temp_data=temp_data)
+                else:
+                    # 이미 소감 남김 → 완료 메시지 반복
+                    logger.info(f"[WeeklyAgent] v2.0 완료 후 반복 접근 → 완료 메시지")
+                    ai_response = "이번 주 주간요약이 완료되었어요! 다음 주에도 열심히 기록해봐요! 😊"
+
                 return Command(update={"ai_response": ai_response}, goto="__end__")
 
             # v1.0 + 역질문 생성

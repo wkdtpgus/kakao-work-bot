@@ -20,7 +20,6 @@ from .conversation_repository import (
     get_today_conversations,
     get_weekly_summary_flag,
     clear_weekly_summary_flag,
-    set_weekly_summary_flag,
     update_daily_session_data,
     handle_rejection_flag
 )
@@ -53,7 +52,6 @@ __all__ = [
     "get_today_conversations",
     "get_weekly_summary_flag",
     "clear_weekly_summary_flag",
-    "set_weekly_summary_flag",
     "update_daily_session_data",
     "handle_rejection_flag",
 

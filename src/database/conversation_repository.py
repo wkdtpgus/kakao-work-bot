@@ -84,36 +84,6 @@ async def clear_weekly_summary_flag(db, user_id: str) -> None:
     logger.info(f"[ConvRepo] 주간 요약 플래그 정리 완료 (completed_week={current_week})")
 
 
-async def set_weekly_summary_flag(
-    db,
-    user_id: str,
-    attendance_count: int,
-    daily_session_data: Dict[str, Any]
-) -> None:
-    """주간 요약 생성 플래그 설정 (7일차 달성 시)
-
-    Args:
-        db: Database 인스턴스
-        user_id: 카카오 사용자 ID
-        attendance_count: 현재 attendance_count
-        daily_session_data: 현재 세션 데이터
-    """
-    conv_state = await db.get_conversation_state(user_id)
-    temp_data = conv_state.get("temp_data", {}) if conv_state else {}
-
-    temp_data["weekly_summary_ready"] = True
-    temp_data["attendance_count"] = attendance_count
-    temp_data["daily_count_verified"] = True
-    temp_data["daily_session_data"] = daily_session_data
-
-    await db.upsert_conversation_state(
-        user_id,
-        current_step="weekly_summary_pending",
-        temp_data=temp_data
-    )
-    logger.info(f"[ConvRepo] 주간 요약 플래그 설정 완료 (attendance={attendance_count})")
-
-
 async def update_daily_session_data(
     db,
     user_id: str,

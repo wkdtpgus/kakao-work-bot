@@ -495,7 +495,8 @@ class Database:
         user_message: str,
         ai_message: str,
         is_summary: bool = False,
-        summary_type: str = None
+        summary_type: str = None,
+        is_review: bool = False
     ) -> Optional[Dict[str, Any]]:
         """대화 턴 저장 (V2 스키마)
 
@@ -507,6 +508,7 @@ class Database:
             ai_message: AI 응답
             is_summary: 요약 메시지 여부 (기본 False)
             summary_type: 요약 타입 ('daily', 'weekly', None)
+            is_review: 주간 소감/리뷰 메시지 여부 (기본 False)
 
         Returns:
             dict: {
@@ -537,7 +539,8 @@ class Database:
             # 2. user_answer_messages 저장
             user_response = self.supabase.table("user_answer_messages").insert({
                 "kakao_user_id": user_id,
-                "content": user_message
+                "content": user_message,
+                "is_review": is_review
             }).execute()
 
             if not user_response.data:
