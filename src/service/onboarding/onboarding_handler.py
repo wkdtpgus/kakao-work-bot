@@ -211,13 +211,38 @@ async def process_extraction_result(
         else:
             # 검증
             if field_template.validate(extracted_value):
-                setattr(updated_metadata, target_field, extracted_value)
-                updated_metadata.field_status[target_field] = "filled"
-                updated_metadata.field_attempts[target_field] = current_attempt + 1
-                logger.info(f"[OnboardingHandler] [{target_field}] 값 저장: {extracted_value}")
+                # privacy_consent 특수 처리: "동의" → True, "비동의" → 재질문
+                if target_field == "privacy_consent":
+                    if extracted_value.strip() == "동의":
+                        setattr(updated_metadata, target_field, True)
+                        updated_metadata.field_status[target_field] = "filled"
+                        updated_metadata.field_attempts[target_field] = current_attempt + 1
+                        logger.info(f"[OnboardingHandler] [{target_field}] 값 저장: True")
+                        next_field = get_next_field(updated_metadata.dict())
+                    else:
+                        # 비동의 시 저장하지 않고 재질문
+                        updated_metadata.field_attempts[target_field] = current_attempt + 1
+                        new_attempt = updated_metadata.field_attempts[target_field]
+                        logger.info(f"[OnboardingHandler] [{target_field}] 비동의 - 재질문 ({new_attempt}/3)")
 
-                # 다음 필드
-                next_field = get_next_field(updated_metadata.dict())
+                        progress = get_progress_indicator(updated_metadata.dict())
+                        question = field_template.get_question(min(new_attempt + 1, 3), name=user_name)
+                        ai_response = f"⚠️ 개인정보 수집 동의 없이는 3분커리어 서비스를 이용하실 수 없습니다.\n\n{progress}\n\n{question}"
+
+                        await save_onboarding_metadata(db, user_id, updated_metadata)
+                        return {
+                            "ai_response": ai_response,
+                            "is_completed": False,
+                            "should_save": False
+                        }
+                else:
+                    setattr(updated_metadata, target_field, extracted_value)
+                    updated_metadata.field_status[target_field] = "filled"
+                    updated_metadata.field_attempts[target_field] = current_attempt + 1
+                    logger.info(f"[OnboardingHandler] [{target_field}] 값 저장: {extracted_value}")
+
+                    # 다음 필드
+                    next_field = get_next_field(updated_metadata.dict())
             else:
                 # 검증 실패
                 updated_metadata.field_attempts[target_field] = current_attempt + 1
@@ -226,8 +251,21 @@ async def process_extraction_result(
 
         # 시도 횟수 체크 (3회 초과 시 스킵)
         if updated_metadata.field_attempts.get(target_field, 0) >= 3:
-            updated_metadata.field_status[target_field] = "insufficient"
-            setattr(updated_metadata, target_field, f"[INSUFFICIENT] {extracted_value or message[:50]}")
+            # privacy_consent 특수 처리: 3회 비동의 시 False 저장 + 서비스 차단
+            if target_field == "privacy_consent":
+                setattr(updated_metadata, target_field, False)
+                updated_metadata.field_status[target_field] = "rejected"
+                await save_onboarding_metadata(db, user_id, updated_metadata)
+                ai_response = "개인정보 수집에 동의하지 않으셨습니다.\n\n⚠️ 개인정보 수집 동의 없이는 3분커리어 서비스를 이용하실 수 없습니다.\n\n서비스 이용을 원하시면 관리자에게 문의해주세요."
+                logger.info(f"[OnboardingHandler] [{target_field}] 3회 비동의 - 서비스 차단")
+                return {
+                    "ai_response": ai_response,
+                    "is_completed": False,
+                    "should_save": False
+                }
+            else:
+                updated_metadata.field_status[target_field] = "insufficient"
+                setattr(updated_metadata, target_field, f"[INSUFFICIENT] {extracted_value or message[:50]}")
             next_field = get_next_field(updated_metadata.dict())
 
         # 다음 질문 생성

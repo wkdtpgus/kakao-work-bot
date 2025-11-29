@@ -136,10 +136,34 @@ FIELD_TEMPLATES: Dict[str, FieldTemplate] = {
 
     "important_thing": FieldTemplate(
         field_name="important_thing",
-        first_attempt="이제 마지막 질문이에요 {name}님! 일할 때 가장 중요하게 생각하는 가치를 알려주세요.\n예: '성장과 배움', '워라밸', '좋은 동료', '자율성', '보상'",
+        first_attempt="{name}님! 일할 때 가장 중요하게 생각하는 가치를 알려주세요.\n예: '성장과 배움', '워라밸', '좋은 동료', '자율성', '보상'",
         second_attempt="{name}님, 업무에서 본인이 가장 가치있게 여기는 것이 무엇인지 간단히 알려주세요.\n예: '성장', '워라밸', '동료', '자율성'",
         third_attempt="{name}님, 일할 때 중요한 가치를 선택하거나 직접 말씀해주세요.\n예: '성장과 배움', '워라밸', '좋은 동료', '자율성'\n💡 건너뛰려면 '건너뛰기'라고 말해주세요.",
         validation=validate_text
+    ),
+
+    "privacy_consent": FieldTemplate(
+        field_name="privacy_consent",
+        first_attempt="""[개인정보 수집 및 이용 동의]
+아래 내용에 동의하시면 '동의'로 답변해주세요. 
+'비동의'시 서비스를 이용할 수 없습니다.
+
+📌 수집 목적
+• <3분커리어> 운영 카카오톡 알림
+• <3분커리어> 다음 서비스 안내
+• <3분커리어> 운영 DB화
+
+📌 필수 항목
+• 기본 정보(직무, 연차, 커리어 목표)
+• 업무/프로젝트 정보(이름, 목표, 직무)
+• 일일 기록
+
+📌 보유 및 이용 기간
+• 관계 법령에 따른 보관기간 이후 또는 개인정보 이용 목적 달성 시 지체 없이 파기
+""",
+        second_attempt="개인정보 수집 및 이용에 동의해주셔야 서비스를 이용하실 수 있어요.\n'동의' 또는 '비동의'로 답변해주세요.",
+        third_attempt="'동의' 또는 '비동의'로 답변해주세요.\n\n⚠️ 비동의 시 서비스 이용이 불가합니다.",
+        validation=lambda x: x.strip() in ["동의", "비동의"]
     )
 }
 
@@ -154,7 +178,8 @@ FIELD_ORDER = [
     "project_name",
     "recent_work",
     "job_meaning",
-    "important_thing"
+    "important_thing",
+    "privacy_consent"
 ]
 
 

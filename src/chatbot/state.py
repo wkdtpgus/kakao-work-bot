@@ -54,6 +54,7 @@ class UserMetadata(BaseModel):
     recent_work: Optional[str] = None
     job_meaning: Optional[str] = None
     important_thing: Optional[str] = None
+    privacy_consent: Optional[bool] = None  # 개인정보 수집 동의 여부
 
     # 루프 방지: 시도 횟수 및 상태 추적
     field_attempts: Dict[str, int] = Field(default_factory=dict)
